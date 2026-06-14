@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.services.llm import LlmError, stream_chat
+from app.services.llm import LlmError, stream_chat_with_retry
 from app.services.prompts import ensure_system_message
 
 log = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ async def stream(_req: InterviewRequest) -> StreamingResponse:
 
     async def event_source() -> AsyncIterator[bytes]:
         try:
-            async for token in stream_chat(msgs):
+            async for token in stream_chat_with_retry(msgs):
                 # 用 JSON 序列化以避免换行/引号等字符破坏 SSE 协议
                 yield f"data: {json.dumps(token, ensure_ascii=False)}\n\n".encode("utf-8")
         except LlmError as e:
@@ -56,7 +56,7 @@ async def interview_non_stream(_req: InterviewRequest) -> dict:
     msgs = ensure_system_message([m.model_dump() for m in _req.messages])
     chunks: list[str] = []
     try:
-        async for token in stream_chat(msgs):
+        async for token in stream_chat_with_retry(msgs):
             chunks.append(token)
     except LlmError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e

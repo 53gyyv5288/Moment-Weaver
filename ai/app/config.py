@@ -11,8 +11,9 @@ class Settings(BaseSettings):
     app_port: int = 8000
     log_level: str = "INFO"
 
-    # LLM（M2 启用）— OpenAI 兼容协议，兼容 DeepSeek/通义千问/Ollama/vLLM/LM Studio
-    # 实际项目里把 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL 替换为你的 MiniMax 2.7 服务的对应值
+    # LLM（M2 启用）— OpenAI 兼容协议，兼容 DeepSeek/通义千问/Ollama/vLLM/LM Studio/MiniMax-M3
+    # 实际项目里把 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL 替换为你的 MiniMax-M3 服务对应值
+    # 真实 key 放在 .env（已 gitignore），这里只是兜底默认值
     llm_base_url: str = "http://localhost:11434/v1"   # Ollama 默认
     llm_api_key: str = "ollama"                        # 本地一般随便填
     llm_model: str = "qwen2.5:7b"
