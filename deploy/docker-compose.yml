@@ -1,0 +1,79 @@
+# ============================================================
+# Moment Weaver · 生产部署用 docker-compose
+# 本期不用于本地开发，仅 M5 部署到阿里云 ECS 时使用
+# ============================================================
+version: "3.8"
+
+services:
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/certs:/etc/nginx/certs
+    depends_on:
+      - backend
+      - ai
+    restart: always
+
+  backend:
+    build: ../backend
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DB: moment_weaver
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MONGO_URI: mongodb://mongo:27017/moment_weaver
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      - mysql
+      - mongo
+      - redis
+    restart: always
+
+  ai:
+    build: ../ai
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      MOMENT_BACKEND_URL: http://backend:8080
+      MONGO_URI: mongodb://mongo:27017
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - mongo
+      - redis
+    restart: always
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: moment_weaver
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../db/init:/docker-entrypoint-initdb.d
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    restart: always
+
+  mongo:
+    image: mongo:6.0
+    volumes:
+      - mongo_data:/data/db
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: always
+
+volumes:
+  mysql_data:
+  mongo_data:
+  redis_data:

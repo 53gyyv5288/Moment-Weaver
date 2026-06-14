@@ -1,0 +1,33 @@
+{
+  "name": "moment-weaver-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "vue": "^3.4.27",
+    "vue-router": "^4.3.2",
+    "pinia": "^2.1.7",
+    "axios": "^1.7.2",
+    "element-plus": "^2.7.4",
+    "@element-plus/icons-vue": "^2.3.1",
+    "vant": "^4.9.0",
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vue-tsc": "^2.0.19",
+    "@types/node": "^20.12.12",
+    "@types/markdown-it": "^14.1.2",
+    "unplugin-vue-components": "^0.26.0",
+    "unplugin-auto-import": "^0.17.6",
+    "sass": "^1.77.2"
+  }
+}

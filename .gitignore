@@ -1,0 +1,65 @@
+# ----- Java / Maven -----
+target/
+*.class
+*.jar
+*.war
+.idea/
+*.iml
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.classpath
+.project
+.settings/
+.mvn/
+mvnw
+mvnw.cmd
+HELP.md
+*.log
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# ----- Node / Vue -----
+node_modules/
+dist/
+.vite/
+.cache/
+*.local
+.pnpm-store/
+
+# ----- 密钥 / 环境 -----
+.env
+.env.local
+.env.*.local
+deploy/.env
+ai/.env
+**/application-local.yml
+**/application-prod.yml
+secrets/
+
+# ----- 运行时产物 -----
+logs/
+*.log
+nohup.out
+.DS_Store
+Thumbs.db
+
+# ----- 备份 -----
+*.sql.bak
+dump/

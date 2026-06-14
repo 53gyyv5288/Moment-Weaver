@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Edit", "Write", "MultiEdit",
+      "Read", "Glob", "Grep",
+      "Bash(npm:*)", "Bash(npx:*)", "Bash(node:*)",
+      "Bash(mvn:*)", "Bash(java:*)",
+      "Bash(python:*)", "Bash(pytest:*)", "Bash(pip:*)", "Bash(uvicorn:*)",
+      "Bash(git:*)",
+      "Bash(mysql:*)",
+      "Bash(ls:*)", "Bash(dir:*)", "Bash(cd:*)", "Bash(type:*)", "Bash(echo:*)", "Bash(findstr:*)"
+    ],
+    "deny": [
+      "Bash(rm:*)", "Bash(del:*)", "Bash(rd:*)", "Bash(format:*)", "Bash(reg:*)"
+    ]
+  }
+}

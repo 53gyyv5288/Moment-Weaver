@@ -1,0 +1,3 @@
+# prompt 模板集中管理
+# M2 阶段：interviewer_system.j2
+# M4 阶段：narrative_person.j2、narrative_family.j2
