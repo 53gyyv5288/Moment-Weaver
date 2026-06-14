@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 采访对话房间。M2 SSE 流式输出。
+ * 采访对话房间。M2 SSE 流式输出 + M3 摘要按钮。
  */
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -12,6 +12,7 @@ import {
   type InterviewSessionVO,
   type InterviewMessageVO,
 } from '@/api/interview'
+import { summarizeSession } from '@/api/summary'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +22,7 @@ const session = ref<InterviewSessionVO | null>(null)
 const input = ref('')
 const streaming = ref(false)
 const closing = ref(false)
+const regenerating = ref(false)
 const scroller = ref<HTMLElement | null>(null)
 
 const visibleMessages = computed(() =>
@@ -97,8 +99,9 @@ async function onClose() {
   try {
     const { data } = await closeInterviewSession(sessionId.value)
     if (data?.code === 0) {
-      ElMessage.success('已结束')
-      router.replace('/projects')
+      ElMessage.success('已结束，AI 正在生成摘要…')
+      // 跳到摘要页，让用户看到异步生成的摘要
+      router.replace(`/interview/${sessionId.value}/summary`)
       return
     }
     // 后端 200 但业务码非 0 —— 兜底提示
@@ -109,6 +112,29 @@ async function onClose() {
     ElMessage.error(msg)
   } finally {
     closing.value = false
+  }
+}
+
+async function onShowSummary() {
+  // 没关采访也能看摘要（已生成的）
+  router.push(`/interview/${sessionId.value}/summary`)
+}
+
+async function onGenerateSummary() {
+  // 手动触发同步摘要生成
+  regenerating.value = true
+  try {
+    const { data } = await summarizeSession(sessionId.value)
+    if (data?.code === 0) {
+      ElMessage.success('摘要已生成')
+      router.push(`/interview/${sessionId.value}/summary`)
+    } else {
+      ElMessage.error(data?.message || '生成失败')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '生成失败')
+  } finally {
+    regenerating.value = false
   }
 }
 
@@ -124,6 +150,8 @@ onMounted(load)
         <p class="muted">项目：{{ session.projectName }}</p>
       </div>
       <el-button :loading="closing" type="danger" plain @click="onClose">结束会话</el-button>
+      <el-button v-if="session.summary" plain @click="onShowSummary">查看摘要</el-button>
+      <el-button v-else type="primary" plain :loading="regenerating" @click="onGenerateSummary">生成摘要</el-button>
     </header>
 
     <main ref="scroller" class="ir__main">

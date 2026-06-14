@@ -10,6 +10,14 @@ const route = useRoute()
 
 const breadcrumb = computed(() => (route.meta?.title as string) || '')
 
+// 只在「项目相关页」露出时间线入口
+const currentProjectId = computed<string | null>(() => {
+  const m = route.path.match(/^\/projects\/(\d+)/)
+  if (m && route.path !== '/projects/new') return m[1]
+  // 也支持从 interview/:id 解析（采访会话里有 projectId，可后续优化）
+  return null
+})
+
 async function handleLogout() {
   try {
     await ElMessageBox.confirm('确定要退出登录吗？', '提示', {
@@ -40,6 +48,7 @@ async function handleLogout() {
         class="layout__menu"
       >
         <el-menu-item index="/projects">我的项目</el-menu-item>
+        <el-menu-item v-if="currentProjectId" :index="`/projects/${currentProjectId}/timeline`">时间线</el-menu-item>
       </el-menu>
       <div class="layout__user">
         <span class="layout__name">{{ auth.user?.displayName || '未登录' }}</span>

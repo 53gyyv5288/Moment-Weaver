@@ -123,3 +123,48 @@ export interface InterviewSessionVO {
   lastMessageAt?: string
   closedAt?: string
 }
+
+// ============ M3 业务类型 ============
+
+/** 采访会话的结构化摘要 */
+export interface InterviewSummaryVO {
+  title: string
+  goldenQuotes: string[]
+  keyMoments: { timestamp: string; text: string }[]
+  generatedAt: string
+}
+
+/** 素材 */
+export interface AssetVO {
+  id: string
+  projectId: string
+  subjectId?: string
+  interviewId?: string
+  kind: 'image' | 'audio' | 'video' | string
+  storage: 'oss' | 'local' | string
+  /** mock 模式 = /api/v1/assets/{id}/file；real 模式 = 签名 URL */
+  url: string
+  originalName?: string
+  mimeType?: string
+  sizeBytes?: number
+  width?: number
+  height?: number
+  durationMs?: number
+  caption?: string
+  takenAt?: string
+  scanStatus?: string
+  createdAt?: string
+}
+
+/** 时间线条目 */
+export interface TimelineItemVO {
+  id: string
+  projectId: string
+  subjectId?: string
+  type: 'interview_message' | 'asset_uploaded' | 'ai_summary' | string
+  eventAt: string
+  refId?: string
+  title: string
+  preview?: string
+  metadata?: Record<string, unknown>
+}

@@ -85,9 +85,26 @@ moment:
 aliyun:
   oss:
     sts:
-      enabled: false
-    bucket: ${ALIYUN_OSS_BUCKET:moment-weaver-dev}
-    region: ${ALIYUN_OSS_REGION:oss-cn-hangzhou}
+      # mock | real。real 必须配套 aliyun.ram.* 配置
+      mode: real
+      # mock 模式下 token 有效期（秒），仅展示
+      mock-ttl-seconds: 3600
+    # 旧字段，保留兼容（real 模式下仍要求 sts.enabled=true）
+    sts-enabled: false
+    role-session-name: moment-weaver-web
+    bucket: ${ALIYUN_OSS_BUCKET}
+    region: ${ALIYUN_OSS_REGION}
+  ram:
+    # real 模式必填；mock 模式忽略
+    access-key-id: ${ALIYUN_RAM_AK:}
+    access-key-secret: ${ALIYUN_RAM_SK:}
+    role-arn: ${ALIYUN_RAM_ROLE_ARN:}
+    # OSS 授权策略；留空走 RAM 角色默认权限
+    policy: ${ALIYUN_RAM_POLICY:}
+    duration-seconds: 3600
+  # 素材本地存储（M3 mock 模式用）
+  local-storage:
+    root: ${MOMENT_LOCAL_STORAGE_ROOT:./uploads}
 
 logging:
   level:

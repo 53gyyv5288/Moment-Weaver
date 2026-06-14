@@ -6,7 +6,8 @@
       "Bash(findstr:*)",
       "Bash(cmd:*)",
       "Bash(if exist:*)",
-      "Bash(if not exist \"C:\\\\Learning\\\\Moment Weaver\\\\.claude\" mkdir \"C:\\\\Learning\\\\Moment Weaver\\\\.claude\")"
+      "Bash(if not exist \"C:\\\\Learning\\\\Moment Weaver\\\\.claude\" mkdir \"C:\\\\Learning\\\\Moment Weaver\\\\.claude\")",
+      "Bash(where mvn)"
     ]
   }
 }

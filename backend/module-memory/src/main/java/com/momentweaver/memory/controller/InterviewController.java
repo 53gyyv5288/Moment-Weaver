@@ -60,6 +60,12 @@ public class InterviewController {
         return Result.ok(interviewService.close(CurrentUser.requireId(), id));
     }
 
+    @PostMapping("/sessions/{id}/summarize")
+    @Operation(summary = "手动触发一次摘要生成（同步等结果）")
+    public Result<InterviewSessionVO> summarize(@PathVariable String id) {
+        return Result.ok(interviewService.summarizeNow(CurrentUser.requireId(), id));
+    }
+
     @PostMapping(value = "/sessions/{id}/message", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "发送一条用户消息；返回 SSE 流，token 级别推送 AI 回复")
     public SseEmitter send(@PathVariable String id, @Valid @RequestBody InterviewSendRequest req) {

@@ -56,6 +56,24 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/interview/InterviewRoom.vue'),
         meta: { title: '采访房间' },
       },
+      {
+        path: 'interview/:id/summary',
+        name: 'interview-summary',
+        component: () => import('@/views/interview/InterviewSummary.vue'),
+        meta: { title: '采访摘要' },
+      },
+      {
+        path: 'projects/:id/timeline',
+        name: 'project-timeline',
+        component: () => import('@/views/timeline/Timeline.vue'),
+        meta: { title: '时间线' },
+      },
+      {
+        path: 'timeline/event/:eventId',
+        name: 'timeline-event',
+        component: () => import('@/views/timeline/MomentDetail.vue'),
+        meta: { title: '事件详情' },
+      },
     ],
   },
 

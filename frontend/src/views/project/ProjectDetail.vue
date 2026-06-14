@@ -20,6 +20,8 @@ import {
   type AuthorizationVO,
 } from '@/api/authorization'
 import { startInterview } from '@/api/interview'
+import AssetUploader from '@/views/asset/AssetUploader.vue'
+import AssetList from '@/views/asset/AssetList.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -213,6 +215,11 @@ async function onStartInterview(s: SubjectVO) {
     ElMessage.error(data?.message || '启动失败')
   }
 }
+
+const assetListRef = ref<InstanceType<typeof AssetList> | null>(null)
+function loadAssets() {
+  assetListRef.value?.load?.()
+}
 </script>
 
 <template>
@@ -312,6 +319,16 @@ async function onStartInterview(s: SubjectVO) {
             </template>
           </el-table-column>
         </el-table>
+      </el-tab-pane>
+
+      <!-- ============== 素材 ============== -->
+      <el-tab-pane label="素材">
+        <template #label>
+          <span>素材</span>
+        </template>
+        <AssetUploader :project-id="projectId" @uploaded="loadAssets" />
+        <el-divider />
+        <AssetList ref="assetListRef" :project-id="projectId" @changed="loadAssets" />
       </el-tab-pane>
     </el-tabs>
 

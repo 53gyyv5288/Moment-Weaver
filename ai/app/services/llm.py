@@ -203,3 +203,60 @@ async def stream_chat_with_retry(
             if attempt >= _LLM_RETRY_MAX:
                 raise LlmError(f"LLM stream failed after {_LLM_RETRY_MAX} retry: {e}") from e
             raise
+
+
+async def chat(
+    messages: list[dict],
+    *,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> str:
+    """
+    非流式 chat：攒齐所有 token 后一次性返回完整文本。
+    复用 stream_chat_with_retry 的重试 + think-stripper 行为；
+    不同点在于不开 stream，HTTP body 一次拿回来。
+
+    适用：摘要、关键词抽取、改写——结果需要 JSON 解析等「整段语义」操作时。
+    """
+    s = get_settings()
+    url = s.llm_base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": s.llm_model,
+        "messages": messages,
+        "stream": False,
+        "temperature": temperature if temperature is not None else s.llm_temperature,
+        "max_tokens": max_tokens if max_tokens is not None else s.llm_max_tokens,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {s.llm_api_key}",
+    }
+    timeout = httpx.Timeout(s.llm_timeout_s, connect=10.0)
+    last_err: BaseException | None = None
+    for attempt in range(_LLM_RETRY_MAX + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code != 200:
+                    body = resp.text[:200]
+                    raise LlmError(f"LLM {resp.status_code}: {body}")
+                obj = resp.json()
+                choice = (obj.get("choices") or [{}])[0]
+                msg = choice.get("message") or {}
+                content = msg.get("content") or ""
+                # 非流式也可能包含 <think>，但这里完整拿到后用 stripper 处理更稳妥
+                stripper = _ThinkStripper()
+                visible = stripper.feed(content)
+                tail = stripper.flush()
+                return (visible + tail).strip()
+        except (LlmError, httpx.HTTPError) as e:
+            last_err = e
+            if attempt < _LLM_RETRY_MAX and _should_retry(e):
+                log.warning(
+                    "LLM chat failed (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, _LLM_RETRY_MAX + 1, _LLM_RETRY_BACKOFF_S, e,
+                )
+                await asyncio.sleep(_LLM_RETRY_BACKOFF_S)
+                continue
+            break
+    raise LlmError(f"LLM chat failed: {last_err}")

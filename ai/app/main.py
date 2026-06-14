@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import asset, health, interview, narrative
+from app.routers import asset, health, interview, narrative, summarize
 
 settings = get_settings()
 
@@ -37,6 +37,7 @@ app.include_router(health.router, tags=["health"])
 app.include_router(interview.router, prefix="/api/v1/interview", tags=["interview"])
 app.include_router(narrative.router, prefix="/api/v1/narrative", tags=["narrative"])
 app.include_router(asset.router, prefix="/api/v1/asset", tags=["asset"])
+app.include_router(summarize.router, prefix="/api/v1/summarize", tags=["summarize"])
 
 
 @app.get("/")

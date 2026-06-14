@@ -1,6 +1,9 @@
 package com.momentweaver.memory.entity;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
@@ -40,7 +43,33 @@ public class InterviewSession {
     /** 消息历史，按时间顺序；同一文档内嵌，避免 N+1 */
     private List<InterviewMessage> messages = new ArrayList<>();
 
+    /** M3：AI 自动生成的本次会话结构化摘要 */
+    private InterviewSummary summary;
+
     private LocalDateTime startedAt;
     private LocalDateTime lastMessageAt;
     private LocalDateTime closedAt;
+
+    /** 采访摘要：标题、金句、关键时间点 */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class InterviewSummary {
+        private String title;
+        private List<String> goldenQuotes = new ArrayList<>();
+        private List<KeyMoment> keyMoments = new ArrayList<>();
+        private LocalDateTime generatedAt;
+        private String generatedBy; // ai | manual
+    }
+
+    /** 关键时间点：timestamp 是会话内相对时间（如 "08:32"）或绝对 ISO */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class KeyMoment {
+        private String timestamp;
+        private String text;
+    }
 }

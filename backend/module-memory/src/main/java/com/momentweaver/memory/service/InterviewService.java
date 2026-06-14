@@ -7,6 +7,8 @@ import com.momentweaver.account.mapper.ProjectMapper;
 import com.momentweaver.account.mapper.WorkspaceMemberMapper;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
+import com.momentweaver.common.event.TimelineEventRequest;
+import com.momentweaver.common.event.TimelineEventTypes;
 import com.momentweaver.memory.client.AiClient;
 import com.momentweaver.memory.dto.InterviewSessionVO;
 import com.momentweaver.memory.dto.InterviewStartRequest;
@@ -19,6 +21,8 @@ import com.momentweaver.memory.mapper.SubjectMapper;
 import com.momentweaver.memory.repo.InterviewSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -38,6 +42,7 @@ public class InterviewService {
     private final ProjectMapper projectMapper;
     private final WorkspaceMemberMapper workspaceMemberMapper;
     private final AiClient aiClient;
+    private final ApplicationEventPublisher eventPublisher;
 
     /** 启动一个新采访会话（不立即调 AI）。 */
     public InterviewSessionVO start(Long userId, InterviewStartRequest req) {
@@ -147,6 +152,20 @@ public class InterviewService {
                 sess.setLastMessageAt(LocalDateTime.now());
                 sessionRepo.save(sess);
                 log.info("Interview session {} assistant message saved ({} chars)", sessionId, acc.length());
+
+                // 触发时间线事件（M3 解耦：module-timeline 监听并写库）
+                if (!full.isEmpty()) {
+                    String preview = full.length() > 80 ? full.substring(0, 80) + "…" : full;
+                    eventPublisher.publishEvent(new TimelineEventRequest(
+                        sess.getProjectId(),
+                        sess.getSubjectId(),
+                        TimelineEventTypes.INTERVIEW_MESSAGE,
+                        sessionId,
+                        "AI 采访官 · " + (sess.getSubjectDisplayName() == null ? "采访" : sess.getSubjectDisplayName()),
+                        preview,
+                        java.util.Map.of("sessionId", sessionId, "role", "assistant")
+                    ));
+                }
             })
             .doOnError(e -> log.error("Interview session {} stream error", sessionId, e));
     }
@@ -167,6 +186,10 @@ public class InterviewService {
             .toList();
     }
 
+    /**
+     * 关闭会话。
+     * 关闭后若尚无 summary，异步触发一次摘要生成（不阻塞 close 接口）。
+     */
     public InterviewSessionVO close(Long userId, String sessionId) {
         InterviewSession sess = mustSession(sessionId);
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
@@ -175,7 +198,94 @@ public class InterviewService {
         }
         sess.setStatus("closed");
         sess.setClosedAt(LocalDateTime.now());
-        return toVO(sessionRepo.save(sess));
+        InterviewSession saved = sessionRepo.save(sess);
+
+        // 触发异步摘要
+        if (saved.getSummary() == null && hasEnoughContent(saved)) {
+            summarizeAsync(saved.getId());
+        }
+        return toVO(saved);
+    }
+
+    /** 手动触发一次摘要（M3 阶段；前端「重新生成摘要」按钮）。 */
+    public InterviewSessionVO summarizeNow(Long userId, String sessionId) {
+        InterviewSession sess = mustSession(sessionId);
+        Project p = mustProject(Long.parseLong(sess.getProjectId()));
+        ensureMember(p.getWorkspaceId(), userId);
+        summarizeSync(sess);
+        return toVO(sess);
+    }
+
+    /** 异步：关 close 后自动调一次 */
+    @Async("summaryExecutor")
+    public void summarizeAsync(String sessionId) {
+        try {
+            InterviewSession sess = sessionRepo.findById(sessionId).orElse(null);
+            if (sess == null) {
+                log.warn("summarizeAsync: session {} not found", sessionId);
+                return;
+            }
+            summarizeSync(sess);
+        } catch (Exception e) {
+            log.error("summarizeAsync failed for session {}", sessionId, e);
+        }
+    }
+
+    private void summarizeSync(InterviewSession sess) {
+        if (!hasEnoughContent(sess)) {
+            log.info("summarizeSync: session {} has too few user/assistant turns, skip", sess.getId());
+            return;
+        }
+        List<AiClient.AiMessage> aiMsgs = new ArrayList<>();
+        for (InterviewMessage m : sess.getMessages()) {
+            aiMsgs.add(new AiClient.AiMessage(m.getRole(), m.getContent()));
+        }
+        String subjectHint = sess.getSubjectDisplayName() + " | " + sess.getProjectName();
+        AiClient.SummaryResult r = aiClient.summarize(sess.getId(), subjectHint, aiMsgs);
+
+        InterviewSession.InterviewSummary s = InterviewSession.InterviewSummary.builder()
+            .title(r.title == null ? "本次采访" : r.title)
+            .goldenQuotes(r.goldenQuotes == null ? new ArrayList<>() : r.goldenQuotes)
+            .keyMoments(
+                r.keyMoments == null
+                    ? new ArrayList<>()
+                    : r.keyMoments.stream()
+                        .map(km -> InterviewSession.KeyMoment.builder()
+                            .timestamp(km.timestamp == null ? "" : km.timestamp)
+                            .text(km.text == null ? "" : km.text)
+                            .build())
+                        .toList()
+            )
+            .generatedAt(LocalDateTime.now())
+            .generatedBy("ai")
+            .build();
+        sess.setSummary(s);
+        sessionRepo.save(sess);
+        log.info("Session {} summary persisted (title={})", sess.getId(), s.getTitle());
+
+        // 触发时间线事件：ai_summary 一条
+        eventPublisher.publishEvent(new TimelineEventRequest(
+            sess.getProjectId(),
+            sess.getSubjectId(),
+            TimelineEventTypes.AI_SUMMARY,
+            sess.getId(),
+            "AI 摘要 · " + sess.getSubjectDisplayName(),
+            s.getTitle(),
+            java.util.Map.of(
+                "sessionId", sess.getId(),
+                "quoteCount", String.valueOf(s.getGoldenQuotes() == null ? 0 : s.getGoldenQuotes().size()),
+                "momentCount", String.valueOf(s.getKeyMoments() == null ? 0 : s.getKeyMoments().size())
+            )
+        ));
+    }
+
+    /** 至少要 2 轮 user/assistant 才值得摘要 */
+    private boolean hasEnoughContent(InterviewSession sess) {
+        if (sess.getMessages() == null) return false;
+        long turns = sess.getMessages().stream()
+            .filter(m -> "user".equals(m.getRole()) || "assistant".equals(m.getRole()))
+            .count();
+        return turns >= 4;
     }
 
     // ---- helpers ----
@@ -224,6 +334,7 @@ public class InterviewService {
         vo.setSubjectDisplayName(s.getSubjectDisplayName());
         vo.setProjectName(s.getProjectName());
         vo.setMessages(s.getMessages());
+        vo.setSummary(s.getSummary());
         vo.setStartedAt(s.getStartedAt());
         vo.setLastMessageAt(s.getLastMessageAt());
         vo.setClosedAt(s.getClosedAt());
