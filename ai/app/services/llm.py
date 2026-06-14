@@ -33,6 +33,73 @@ def _should_retry(exc: BaseException) -> bool:
     return False
 
 
+class _ThinkStripper:
+    """
+    过滤 LLM 流式输出里的 <think>...</think> 块（推理链 / chain-of-thought）。
+
+    背景：MiniMax-M3 / DeepSeek-R1 / QwQ 等「思考模式」模型在最终回答之前
+    会先输出一段内部推理（放在 <think>...</think> 里）。如果不过滤，
+    前端会直接把这些内心戏渲染给长辈看，体验极差。
+
+    关键点：LLM 是按 token 流式推送的，标签可能被切成多段送到（"`<t`" + `"hink>`"），
+    所以必须用 buffer 攒一下，不能在单 token 内做完整匹配。
+    """
+    _OPEN = "<think>"
+    _CLOSE = "</think>"
+    _MAX_TAG_LEN = max(len(_OPEN), len(_CLOSE))  # 9
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_think = False
+
+    def feed(self, token: str) -> str:
+        """把一个 token 喂进来，返回应该向客户端吐出的可见文本（可能为空串）。"""
+        self._buf += token
+        out: list[str] = []
+        i = 0
+        n = len(self._buf)
+        while i < n:
+            if not self._in_think:
+                # 在可见区：寻找 <think>
+                j = self._buf.find(self._OPEN, i)
+                if j == -1:
+                    # 缓冲里没看到 <think>，保留最后 _MAX_TAG_LEN-1 个字符（防标签被切）
+                    safe_end = max(i, n - (self._MAX_TAG_LEN - 1))
+                    if safe_end > i:
+                        out.append(self._buf[i:safe_end])
+                        i = safe_end
+                    break
+                else:
+                    # 把 <think> 之前的内容吐出来
+                    if j > i:
+                        out.append(self._buf[i:j])
+                    self._in_think = True
+                    i = j + len(self._OPEN)
+            else:
+                # 在 think 块内：寻找 </think>
+                j = self._buf.find(self._CLOSE, i)
+                if j == -1:
+                    # 还没看到结束；整段都先吞掉
+                    i = n
+                    break
+                else:
+                    self._in_think = False
+                    i = j + len(self._CLOSE)
+        self._buf = self._buf[i:]
+        return "".join(out)
+
+    def flush(self) -> str:
+        """流结束时调用。
+        - 如果还在 think 模式（模型忘了写 </think>），整段视为私有不吐。
+        - 否则把缓冲里残留的可见内容吐出来。
+        """
+        if self._in_think:
+            return ""
+        out = self._buf
+        self._buf = ""
+        return out
+
+
 async def stream_chat(
     messages: list[dict],
     *,
@@ -65,6 +132,7 @@ async def stream_chat(
                 if resp.status_code != 200:
                     body = await resp.aread()
                     raise LlmError(f"LLM {resp.status_code}: {body[:200].decode(errors='ignore')}")
+                stripper = _ThinkStripper()
                 async for line in resp.aiter_lines():
                     if not line:
                         continue
@@ -85,7 +153,13 @@ async def stream_chat(
                     delta = choice.get("delta") or choice.get("message") or {}
                     token = delta.get("content")
                     if token:
-                        yield token
+                        visible = stripper.feed(token)
+                        if visible:
+                            yield visible
+                # 流结束（正常 / 异常 / [DONE]），把缓冲里残留的可见尾巴吐出来
+                tail = stripper.flush()
+                if tail:
+                    yield tail
         except httpx.HTTPError as e:
             raise LlmError(f"LLM HTTP error: {e}") from e
 

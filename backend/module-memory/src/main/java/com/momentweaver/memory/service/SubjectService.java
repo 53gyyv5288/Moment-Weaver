@@ -8,6 +8,7 @@ import com.momentweaver.account.mapper.WorkspaceMemberMapper;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
 import com.momentweaver.memory.dto.SubjectCreateRequest;
+import com.momentweaver.memory.dto.SubjectUpdateRequest;
 import com.momentweaver.memory.dto.SubjectVO;
 import com.momentweaver.memory.entity.Authorization;
 import com.momentweaver.memory.entity.Subject;
@@ -73,6 +74,39 @@ public class SubjectService {
         Subject s = mustSubject(subjectId);
         Project p = mustProject(s.getProjectId());
         ensureMember(p.getWorkspaceId(), userId);
+        Authorization latest = authorizationMapper.selectOne(
+            new LambdaQueryWrapper<Authorization>()
+                .eq(Authorization::getSubjectId, subjectId)
+                .orderByDesc(Authorization::getCreatedAt)
+                .last("LIMIT 1")
+        );
+        return toVO(s, latest);
+    }
+
+    /**
+     * 局部更新人物。只有请求里出现的字段会被改动；relation/note 显式传 "" 视为清空。
+     * 权限：工作区成员即可（与 create 对齐）。注意：note 字段虽然设计上仅 owner 可见，
+     * 但当前 list/get 都会返回给所有成员，权限收紧放在 M3 再做。
+     */
+    @Transactional
+    public SubjectVO update(Long userId, Long subjectId, SubjectUpdateRequest req) {
+        Subject s = mustSubject(subjectId);
+        Project p = mustProject(s.getProjectId());
+        ensureMember(p.getWorkspaceId(), userId);
+
+        if (req.getDisplayName() != null) {
+            s.setDisplayName(req.getDisplayName().trim());
+        }
+        if (req.getRelation() != null) {
+            // 显式传 "" 清空；不传保持原值
+            s.setRelation(req.getRelation().isEmpty() ? null : req.getRelation().trim());
+        }
+        if (req.getNote() != null) {
+            s.setNote(req.getNote().isEmpty() ? null : req.getNote().trim());
+        }
+        s.setUpdatedAt(LocalDateTime.now());
+        subjectMapper.updateById(s);
+
         Authorization latest = authorizationMapper.selectOne(
             new LambdaQueryWrapper<Authorization>()
                 .eq(Authorization::getSubjectId, subjectId)

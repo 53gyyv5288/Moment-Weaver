@@ -75,6 +75,13 @@ export interface CreateSubjectReq {
   note?: string
 }
 
+/** 局部更新人物。所有字段都可空；不传 = 不变；显式传 "" = 清空 */
+export interface UpdateSubjectReq {
+  displayName?: string
+  relation?: string
+  note?: string
+}
+
 export interface AuthorizationVO {
   id: string
   subjectId: string

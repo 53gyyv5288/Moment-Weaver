@@ -5,10 +5,11 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Plus, ChatLineRound, Delete, Link } from '@element-plus/icons-vue'
+import { CopyDocument, Plus, ChatLineRound, Delete, Link, Edit } from '@element-plus/icons-vue'
 import {
   listSubjects,
   createSubject,
+  updateSubject,
   deleteSubject,
   type SubjectVO,
 } from '@/api/subject'
@@ -30,6 +31,11 @@ const authorizations = ref<AuthorizationVO[]>([])
 const loading = ref(false)
 const newSubject = ref({ displayName: '', relation: '', note: '' })
 const showAddSubject = ref(false)
+// 编辑人物
+const editForm = ref({ displayName: '', relation: '', note: '' })
+const editingSubject = ref<SubjectVO | null>(null)
+const showEditSubject = ref(false)
+const savingEdit = ref(false)
 const newAuthz = ref({ subjectId: '', scopes: ['interview'] as string[] })
 const showCreateAuthz = ref(false)
 
@@ -96,6 +102,47 @@ async function onDeleteSubject(s: SubjectVO) {
   if (data && data.code === 0) {
     ElMessage.success('已删除')
     await load()
+  }
+}
+
+function onOpenEditSubject(s: SubjectVO) {
+  editingSubject.value = s
+  editForm.value = {
+    displayName: s.displayName,
+    relation: s.relation ?? '',
+    note: s.note ?? '',
+  }
+  showEditSubject.value = true
+}
+
+async function onSaveEditSubject() {
+  if (!editingSubject.value) return
+  // 后端 @AssertTrue 要求至少一个字段；前端兜底
+  if (
+    !editForm.value.displayName.trim() &&
+    !editForm.value.relation.trim() &&
+    !editForm.value.note.trim()
+  ) {
+    ElMessage.warning('请至少修改一个字段')
+    return
+  }
+  savingEdit.value = true
+  try {
+    const { data } = await updateSubject(projectId.value, editingSubject.value.id, {
+      displayName: editForm.value.displayName.trim() || undefined,
+      relation: editForm.value.relation.trim() || undefined,
+      note: editForm.value.note.trim() || undefined,
+    })
+    if (data && data.code === 0) {
+      ElMessage.success('已保存')
+      showEditSubject.value = false
+      editingSubject.value = null
+      await load()
+    } else {
+      ElMessage.error(data?.message || '保存失败')
+    }
+  } finally {
+    savingEdit.value = false
   }
 }
 
@@ -205,7 +252,7 @@ async function onStartInterview(s: SubjectVO) {
             </template>
           </el-table-column>
           <el-table-column prop="note" label="备注" show-overflow-tooltip />
-          <el-table-column label="操作" width="280" fixed="right">
+          <el-table-column label="操作" width="320" fixed="right">
             <template #default="{ row }">
               <el-button size="small" :icon="Link" @click="newAuthz.subjectId = row.id; showCreateAuthz = true">
                 发起授权
@@ -219,6 +266,7 @@ async function onStartInterview(s: SubjectVO) {
               >
                 采访
               </el-button>
+              <el-button size="small" :icon="Edit" @click="onOpenEditSubject(row)">编辑</el-button>
               <el-button size="small" type="danger" :icon="Delete" @click="onDeleteSubject(row)" />
             </template>
           </el-table-column>
@@ -283,6 +331,29 @@ async function onStartInterview(s: SubjectVO) {
       <template #footer>
         <el-button @click="showAddSubject = false">取消</el-button>
         <el-button type="primary" @click="onAddSubject">添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑人物对话框 -->
+    <el-dialog v-model="showEditSubject" title="编辑被采访者" width="500px">
+      <el-form label-width="80px" v-if="editingSubject">
+        <el-form-item label="姓名">
+          <el-input v-model="editForm.displayName" placeholder="如：父亲 / 王淑芬" />
+        </el-form-item>
+        <el-form-item label="关系">
+          <el-input v-model="editForm.relation" placeholder="如：父亲、外婆、本人" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="editForm.note" type="textarea" :rows="3" placeholder="选填，自己看的小抄" />
+        </el-form-item>
+        <el-alert type="info" :closable="false" show-icon>
+          <template #title>只提交修改的字段</template>
+          至少修改一项（姓名/关系/备注）才能保存。
+        </el-alert>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditSubject = false">取消</el-button>
+        <el-button type="primary" :loading="savingEdit" @click="onSaveEditSubject">保存</el-button>
       </template>
     </el-dialog>
 

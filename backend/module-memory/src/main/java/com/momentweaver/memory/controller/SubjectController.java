@@ -3,6 +3,7 @@ package com.momentweaver.memory.controller;
 import com.momentweaver.account.security.CurrentUser;
 import com.momentweaver.common.Result;
 import com.momentweaver.memory.dto.SubjectCreateRequest;
+import com.momentweaver.memory.dto.SubjectUpdateRequest;
 import com.momentweaver.memory.dto.SubjectVO;
 import com.momentweaver.memory.service.SubjectService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,6 +39,14 @@ public class SubjectController {
     @Operation(summary = "被采访者详情")
     public Result<SubjectVO> get(@PathVariable Long projectId, @PathVariable Long id) {
         return Result.ok(subjectService.get(CurrentUser.requireId(), id));
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "局部更新人物（只改传过来的字段）")
+    public Result<SubjectVO> update(@PathVariable Long projectId,
+                                    @PathVariable Long id,
+                                    @Valid @RequestBody SubjectUpdateRequest req) {
+        return Result.ok(subjectService.update(CurrentUser.requireId(), id, req));
     }
 
     @DeleteMapping("/{id}")

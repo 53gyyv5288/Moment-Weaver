@@ -83,16 +83,30 @@ async function onSend() {
 }
 
 async function onClose() {
-  await ElMessageBox.confirm('结束本次采访会话？结束后将无法继续对话。', '确认', {
-    type: 'warning',
-  }).catch(() => null)
+  // 1) 确认弹窗：用户取消就早退，**不再调 API**
+  try {
+    await ElMessageBox.confirm('结束本次采访会话？结束后将无法继续对话。', '确认', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+
+  // 2) 调关闭接口：明确处理成功 / 业务失败 / 网络异常三种情况
   closing.value = true
   try {
     const { data } = await closeInterviewSession(sessionId.value)
-    if (data && data.code === 0) {
+    if (data?.code === 0) {
       ElMessage.success('已结束')
       router.replace('/projects')
+      return
     }
+    // 后端 200 但业务码非 0 —— 兜底提示
+    ElMessage.error(data?.message || '结束失败')
+  } catch (e: any) {
+    // 网络错误 / 超时（status 是 undefined，拦截器不提示） / 4xx5xx
+    const msg = e?.response?.data?.message || e?.message || '结束失败，请稍后再试'
+    ElMessage.error(msg)
   } finally {
     closing.value = false
   }
