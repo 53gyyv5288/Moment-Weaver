@@ -210,6 +210,7 @@ async def chat(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    extra_body: dict | None = None,
 ) -> str:
     """
     非流式 chat：攒齐所有 token 后一次性返回完整文本。
@@ -217,16 +218,21 @@ async def chat(
     不同点在于不开 stream，HTTP body 一次拿回来。
 
     适用：摘要、关键词抽取、改写——结果需要 JSON 解析等「整段语义」操作时。
+
+    extra_body：透传给 LLM 的额外参数（OpenAI 兼容协议的 extra_body 字段）。
+    例如 {"chat_template_kwargs": {"enable_thinking": False}} 用来关掉推理模型的思考链。
     """
     s = get_settings()
     url = s.llm_base_url.rstrip("/") + "/chat/completions"
-    payload = {
+    payload: dict = {
         "model": s.llm_model,
         "messages": messages,
         "stream": False,
         "temperature": temperature if temperature is not None else s.llm_temperature,
         "max_tokens": max_tokens if max_tokens is not None else s.llm_max_tokens,
     }
+    if extra_body:
+        payload.update(extra_body)
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {s.llm_api_key}",
@@ -241,6 +247,8 @@ async def chat(
                     body = resp.text[:200]
                     raise LlmError(f"LLM {resp.status_code}: {body}")
                 obj = resp.json()
+                # DEBUG: 完整 LLM 响应，方便排查 content 为空 / reasoning_content 走丢等问题
+                log.debug("LLM chat raw response: %s", json.dumps(obj, ensure_ascii=False)[:2000])
                 choice = (obj.get("choices") or [{}])[0]
                 msg = choice.get("message") or {}
                 content = msg.get("content") or ""
@@ -248,7 +256,18 @@ async def chat(
                 stripper = _ThinkStripper()
                 visible = stripper.feed(content)
                 tail = stripper.flush()
-                return (visible + tail).strip()
+                result = (visible + tail).strip()
+                # 兜底：推理模型（MiniMax-M3 / DeepSeek-R1 / QwQ）的
+                # reasoning_content 字段有时装着「真正的答案」，content 是空
+                if not result:
+                    reasoning = msg.get("reasoning_content")
+                    if reasoning and reasoning.strip():
+                        log.info(
+                            "LLM chat content empty, fallback to reasoning_content (%d chars)",
+                            len(reasoning),
+                        )
+                        result = reasoning.strip()
+                return result
         except (LlmError, httpx.HTTPError) as e:
             last_err = e
             if attempt < _LLM_RETRY_MAX and _should_retry(e):

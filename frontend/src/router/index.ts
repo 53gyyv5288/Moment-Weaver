@@ -74,6 +74,25 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/timeline/MomentDetail.vue'),
         meta: { title: '事件详情' },
       },
+      // M4: 成稿
+      {
+        path: 'projects/:id/drafts',
+        name: 'project-drafts',
+        component: () => import('@/views/draft/DraftList.vue'),
+        meta: { title: '成稿' },
+      },
+      {
+        path: 'drafts/:did/edit',
+        name: 'draft-edit',
+        component: () => import('@/views/draft/DraftEditor.vue'),
+        meta: { title: '成稿编辑' },
+      },
+      {
+        path: 'drafts/:did/read',
+        name: 'draft-read',
+        component: () => import('@/views/draft/DraftReader.vue'),
+        meta: { title: '成稿阅读' },
+      },
     ],
   },
 

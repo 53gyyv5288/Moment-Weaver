@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://localhost:11434/v1"   # Ollama 默认
     llm_api_key: str = "ollama"                        # 本地一般随便填
     llm_model: str = "qwen2.5:7b"
-    llm_timeout_s: float = 120.0
+    # M4 family-template-v1 家族成稿（3 subjects）+ MiniMax-M3 推理思考链，
+    # 单次实测 4~6 分钟，bump 到 600s 留 1.5x 余量
+    llm_timeout_s: float = 600.0
     llm_max_tokens: int = 1024
     llm_temperature: float = 0.7
 

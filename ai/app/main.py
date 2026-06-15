@@ -1,4 +1,6 @@
 """FastAPI 入口。"""
+import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,6 +10,18 @@ from app.config import get_settings
 from app.routers import asset, health, interview, narrative, summarize
 
 settings = get_settings()
+
+# 把 app.* 命名空间的日志（narrative / llm / summarize 等）显式开起来。
+# 没这段的话，log.warning(...) / log.info(...) 不会打到 stdout，
+# 排查 AI 调用链时什么都看不到。
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    stream=sys.stdout,
+)
+# uvicorn 的 access log 用 --access-log 开（默认开），但 app.* 的 logger 走自己的 handler，
+# 把 propagate=True 确保 uvicorn 启动横幅、reloader 之类也走同一份格式
+logging.getLogger("app").setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
 
 
 @asynccontextmanager

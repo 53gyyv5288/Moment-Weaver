@@ -24,6 +24,7 @@ export enum ResultCode {
   UNAUTHORIZED = 1002,
   FORBIDDEN = 1003,
   NOT_FOUND = 1004,
+  CONFLICT = 1006,
 
   // 2xxx 账号 / 认证
   USER_NOT_FOUND = 2001,
@@ -161,10 +162,92 @@ export interface TimelineItemVO {
   id: string
   projectId: string
   subjectId?: string
-  type: 'interview_message' | 'asset_uploaded' | 'ai_summary' | string
+  type:
+    | 'interview_message'
+    | 'asset_uploaded'
+    | 'ai_summary'
+    | 'narrative_draft_created'
+    | 'narrative_draft_section_edited'
+    | 'narrative_draft_published'
+    | string
   eventAt: string
   refId?: string
   title: string
   preview?: string
   metadata?: Record<string, unknown>
+}
+
+// ============ M4 业务类型 ============
+
+/** 章节来源标识 */
+export type SectionProvenance = 'ai' | 'human' | 'mixed' | 'system' | string
+
+/** 重写风格 */
+export type RewriteStyle = 'warmer' | 'concise' | 'vivid' | 'formal' | string
+
+/** 章节 VO */
+export interface SectionVO {
+  sectionId: string
+  sectionTitle: string
+  order: number
+  targetCharsMin?: number
+  targetCharsMax?: number
+  markPolicy?: string
+  content: string
+  provenance: SectionProvenance
+  aiGenerated: boolean
+  factsUsed?: string[]
+  lastRewriteStyle?: RewriteStyle | null
+  rewriteCount: number
+  manuallyEditedAt?: string | null
+}
+
+/** 事实快照 VO */
+export interface FactSnapshotVO {
+  factId: string
+  source: 'interview' | 'asset_caption' | 'note' | string
+  text: string
+  subjectId: string
+  timestamp?: string
+}
+
+/** 成稿 VO */
+export interface NarrativeDraftVO {
+  id: string
+  projectId: string
+  workspaceId?: string
+  ownerId?: string
+  templateId: string
+  scope: 'person' | 'family' | string
+  subjectIds: string[]
+  subjectDisplayNames?: string[]
+  title: string
+  status: 'pending' | 'draft' | 'published' | 'archived' | string
+  sections: SectionVO[]
+  factsSnapshot?: FactSnapshotVO[]
+  createdAt?: string
+  updatedAt?: string
+  publishedAt?: string | null
+  version: number
+}
+
+/** 创建成稿请求 */
+export interface CreateDraftReq {
+  templateId: string
+  scope: 'person' | 'family'
+  subjectIds: string[]
+  title?: string
+}
+
+/** 更新单章节请求 */
+export interface UpdateSectionReq {
+  content?: string
+  rewriteStyle?: RewriteStyle
+}
+
+/** 发布成稿请求 */
+export interface PublishDraftReq {
+  // 当前没有必填字段；保留 title / cover 以备 M5 扩展
+  title?: string
+  cover?: string
 }

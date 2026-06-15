@@ -48,6 +48,7 @@ async function handleLogout() {
         class="layout__menu"
       >
         <el-menu-item index="/projects">我的项目</el-menu-item>
+        <el-menu-item v-if="currentProjectId" :index="`/projects/${currentProjectId}/drafts`">成稿</el-menu-item>
         <el-menu-item v-if="currentProjectId" :index="`/projects/${currentProjectId}/timeline`">时间线</el-menu-item>
       </el-menu>
       <div class="layout__user">

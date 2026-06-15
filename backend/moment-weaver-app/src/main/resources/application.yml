@@ -28,6 +28,10 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
     default-property-inclusion: non_null
+    # LocalDateTime / LocalDate 序列化为 ISO-8601 字符串（默认是 [yyyy,mm,dd,...] 数组，
+    # Pydantic / FastAPI 会 422）
+    serialization:
+      write-dates-as-timestamps: false
 
   servlet:
     multipart:
@@ -73,7 +77,9 @@ moment:
     # FastAI 服务（M2 启用）
     base-url: ${MOMENT_AI_BASE_URL:http://localhost:8000}
     connect-timeout-ms: 5000
-    read-timeout-ms: 120000
+    # M4 family-template-v1 家族成稿 + MiniMax-M3 推理；
+    # AI service 内部 llm_timeout_s=600s，这里留 2x 余量 = 1200s
+    read-timeout-ms: 1200000
   consent:
     # 同意书版本号，跟随前端 consent.md 一起发版
     current-version: "v1.0-20250612"

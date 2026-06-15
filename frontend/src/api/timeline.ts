@@ -5,7 +5,13 @@
 import { backend } from './client'
 import type { ApiResult, PageResult, TimelineItemVO } from '@/types/api'
 
-export type TimelineType = 'interview_message' | 'asset_uploaded' | 'ai_summary'
+export type TimelineType =
+  | 'interview_message'
+  | 'asset_uploaded'
+  | 'ai_summary'
+  | 'narrative_draft_created'
+  | 'narrative_draft_section_edited'
+  | 'narrative_draft_published'
 
 export interface TimelineQuery {
   subjectId?: string | number

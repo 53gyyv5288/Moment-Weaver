@@ -7,7 +7,10 @@
       "Bash(cmd:*)",
       "Bash(if exist:*)",
       "Bash(if not exist \"C:\\\\Learning\\\\Moment Weaver\\\\.claude\" mkdir \"C:\\\\Learning\\\\Moment Weaver\\\\.claude\")",
-      "Bash(where mvn)"
+      "Bash(where mvn)",
+      "Bash(Out-String -Width 200)",
+      "Bash(curl:*)",
+      "Bash(cmd.exe:*)"
     ]
   }
 }

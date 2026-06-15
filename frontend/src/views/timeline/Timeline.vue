@@ -80,6 +80,9 @@ function typeLabel(t?: string) {
     case 'interview_message': return '采访消息'
     case 'asset_uploaded': return '上传素材'
     case 'ai_summary': return 'AI 摘要'
+    case 'narrative_draft_created': return '成稿创建'
+    case 'narrative_draft_section_edited': return '章节编辑'
+    case 'narrative_draft_published': return '成稿发布'
     default: return '事件'
   }
 }
@@ -89,6 +92,9 @@ function typeEmoji(t?: string) {
     case 'interview_message': return '💬'
     case 'asset_uploaded': return '🖼'
     case 'ai_summary': return '✨'
+    case 'narrative_draft_created': return '📄'
+    case 'narrative_draft_section_edited': return '✏️'
+    case 'narrative_draft_published': return '✅'
     default: return '•'
   }
 }
@@ -110,6 +116,23 @@ function onItem(it: TimelineItemVO) {
       // 暂在大图预览（首版仅显示预览图链接）
       if (it.metadata?.url) window.open(it.metadata.url, '_blank')
       break
+    case 'narrative_draft_created':
+    case 'narrative_draft_published':
+      // 跳到对应成稿的阅读页（如果是发布）或编辑页
+      if (it.metadata?.draftId) {
+        const status = it.metadata?.status as string | undefined
+        if (status === 'published') {
+          router.push(`/drafts/${it.metadata.draftId}/read`)
+        } else {
+          router.push(`/drafts/${it.metadata.draftId}/edit`)
+        }
+      }
+      break
+    case 'narrative_draft_section_edited':
+      if (it.metadata?.draftId) {
+        router.push(`/drafts/${it.metadata.draftId}/edit`)
+      }
+      break
   }
 }
 
@@ -121,7 +144,7 @@ onMounted(() => { loadSubjects(); load() })
   <div class="tl">
     <header class="tl__head">
       <h2>时间线</h2>
-      <p class="muted">把采访消息、上传素材、AI 摘要按时间串起来</p>
+      <p class="muted">把采访消息、上传素材、AI 摘要和成稿动态按时间串起来</p>
     </header>
 
     <div class="tl__bar">
@@ -138,13 +161,15 @@ onMounted(() => { loadSubjects(); load() })
         <el-radio-button value="interview_message">消息</el-radio-button>
         <el-radio-button value="asset_uploaded">素材</el-radio-button>
         <el-radio-button value="ai_summary">摘要</el-radio-button>
+        <el-radio-button value="narrative_draft_created">成稿</el-radio-button>
+        <el-radio-button value="narrative_draft_published">发布</el-radio-button>
       </el-radio-group>
       <span class="tl__count">共 {{ items.length }} 条</span>
     </div>
 
     <div v-loading="loading" class="tl__body">
       <div v-if="!loading && items.length === 0" class="tl__empty">
-        <p>暂无事件。开始采访或上传素材试试。</p>
+        <p>暂无事件。开始采访、上传素材或新建成稿试试。</p>
       </div>
 
       <section v-for="g in grouped" :key="g.key" class="tl__day">
