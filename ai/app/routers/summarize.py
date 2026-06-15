@@ -96,7 +96,7 @@ async def summarize(req: SummarizeRequest) -> dict:
         req.session_id, req.subject_hint, len(req.messages),
     )
     try:
-        raw = await chat(msgs, temperature=0.4, max_tokens=1024)
+        raw = await chat(msgs, temperature=0.1, max_tokens=1024)
         obj = _extract_json(raw)
         summary = _coerce_summary(obj)
     except LlmError as e:
