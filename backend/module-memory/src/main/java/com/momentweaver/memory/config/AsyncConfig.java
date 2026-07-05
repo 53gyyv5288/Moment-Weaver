@@ -11,7 +11,7 @@ import java.util.concurrent.Executor;
  * 模块内的异步任务配置。
  * 当前唯一用途：采访 close 后异步生成摘要（避免阻塞 UI）。
  */
-@Configuration
+@Configuration("memoryAsyncConfig")
 @EnableAsync
 public class AsyncConfig {
 

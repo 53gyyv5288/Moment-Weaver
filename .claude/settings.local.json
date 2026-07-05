@@ -10,7 +10,9 @@
       "Bash(where mvn)",
       "Bash(Out-String -Width 200)",
       "Bash(curl:*)",
-      "Bash(cmd.exe:*)"
+      "Bash(cmd.exe:*)",
+      "Bash(xxd:*)",
+      "Bash(powershell -NoProfile -Command:*)"
     ]
   }
 }

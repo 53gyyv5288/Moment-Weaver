@@ -16,6 +16,7 @@ const form = reactive({
   confirm: '',
   displayName: '',
 })
+const agreed = ref(false)
 
 const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)
 const isPhone = (s: string) => /^1[3-9]\d{9}$/.test(s)
@@ -56,6 +57,10 @@ async function onSubmit() {
   if (!formRef.value) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
+  if (!agreed.value) {
+    ElMessage.warning('请先阅读并同意《隐私政策》和《用户协议》')
+    return
+  }
   loading.value = true
   try {
     await auth.register(form.account.trim(), form.password, form.displayName.trim())
@@ -97,7 +102,16 @@ async function onSubmit() {
           <el-input v-model="form.confirm" type="password" show-password placeholder="再输一次" />
         </el-form-item>
 
-        <el-button type="primary" :loading="loading" class="auth__submit" @click="onSubmit">
+        <el-form-item class="auth__consent">
+          <el-checkbox v-model="agreed">
+            我已阅读并同意
+            <el-link type="primary" @click="router.push('/privacy')">《隐私政策》</el-link>
+            和
+            <el-link type="primary" @click="router.push('/privacy')">《用户协议》</el-link>
+          </el-checkbox>
+        </el-form-item>
+
+        <el-button type="primary" :loading="loading" :disabled="!agreed" class="auth__submit" @click="onSubmit">
           注册
         </el-button>
 
@@ -142,5 +156,12 @@ async function onSubmit() {
   margin-top: 16px;
   font-size: 13px;
   color: #6b7280;
+}
+.auth__consent {
+  margin-bottom: 8px;
+}
+.auth__consent :deep(.el-form-item__content) {
+  font-size: 13px;
+  color: #4b5563;
 }
 </style>

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.momentweaver</groupId>
+        <artifactId>moment-weaver-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>module-export</artifactId>
+    <name>Moment Weaver · Export (PDF / 数据导出)</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-account</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-compliance</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-timeline</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-share</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- PDF 渲染：iText 7 + html2pdf (AGPL)。
+             iText 7 完整支持 CFF-based OTF / Variable Font / TrueType 字体嵌入，
+             解决思源黑体（Source Han Sans）嵌入失败问题。
+             注意：AGPL 协议仅本机验证用，生产部署请评估授权。
+             改用具体子模块代替 itext-core 聚合 pom，避免某些镜像源缺失聚合 pom 导致解析失败 -->
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>kernel</artifactId>
+            <version>7.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>io</artifactId>
+            <version>7.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>layout</artifactId>
+            <version>7.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>forms</artifactId>
+            <version>7.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>svg</artifactId>
+            <version>7.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>styled-xml-parser</artifactId>
+            <version>7.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>commons</artifactId>
+            <version>7.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>html2pdf</artifactId>
+            <version>4.0.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>

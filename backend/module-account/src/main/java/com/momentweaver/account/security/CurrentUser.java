@@ -28,4 +28,13 @@ public final class CurrentUser {
             throw new BusinessException(ResultCode.UNAUTHORIZED);
         }
     }
+
+    /**
+     * M5 新增：字符串化的 userId。
+     * 用在 MongoDB document（如 notification.userId）等不方便装 Long 的场景。
+     * 避免把 Long 序列化为 JSON number 时 JS 端精度丢失。
+     */
+    public static String requireIdString() {
+        return String.valueOf(requireId());
+    }
 }

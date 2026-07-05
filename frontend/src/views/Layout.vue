@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationStore } from '@/stores/notification'
+import NotificationBell from '@/components/NotificationBell.vue'
 
 const auth = useAuthStore()
+const notification = useNotificationStore()
 const router = useRouter()
 const route = useRoute()
 
@@ -29,8 +32,17 @@ async function handleLogout() {
     return // 用户取消
   }
   await auth.logout()
+  notification.stopPolling()
   router.push('/login')
 }
+
+// 登录态变化时启停轮询
+onMounted(() => {
+  if (auth.isLoggedIn) notification.startPolling()
+})
+onUnmounted(() => {
+  notification.stopPolling()
+})
 </script>
 
 <template>
@@ -50,8 +62,11 @@ async function handleLogout() {
         <el-menu-item index="/projects">我的项目</el-menu-item>
         <el-menu-item v-if="currentProjectId" :index="`/projects/${currentProjectId}/drafts`">成稿</el-menu-item>
         <el-menu-item v-if="currentProjectId" :index="`/projects/${currentProjectId}/timeline`">时间线</el-menu-item>
+        <el-menu-item index="/notifications">通知</el-menu-item>
+        <el-menu-item index="/compliance">合规</el-menu-item>
       </el-menu>
       <div class="layout__user">
+        <NotificationBell class="layout__bell" />
         <span class="layout__name">{{ auth.user?.displayName || '未登录' }}</span>
         <el-button text @click="handleLogout">退出</el-button>
       </div>
@@ -108,6 +123,7 @@ async function handleLogout() {
   align-items: center;
   gap: 12px;
 }
+.layout__bell { margin-right: 4px; }
 .layout__name {
   color: #4b5563;
   font-size: 14px;

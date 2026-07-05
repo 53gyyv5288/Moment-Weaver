@@ -40,6 +40,28 @@ export enum ResultCode {
   SUBJECT_NOT_FOUND = 3004,
   AUTHORIZATION_NOT_FOUND = 3005,
   AUTHORIZATION_INVALID = 3006,
+  SHARE_TOKEN_INVALID = 3007,
+  SHARE_LINK_NOT_FOUND = 3008,
+  SHARE_LINK_EXPIRED = 3009,
+  SHARE_LINK_REVOKED = 3010,
+  SHARE_LINK_PASSWORD_INVALID = 3011,
+  SHARE_LINK_RATE_LIMIT = 3012,
+  SHARE_LINK_DRAFT_NOT_FOUND = 3013,
+  NOTIFICATION_NOT_FOUND = 3020,
+  EXPORT_REQUEST_NOT_FOUND = 3030,
+  EXPORT_REQUEST_PENDING = 3031,
+  EXPORT_REQUEST_FAILED = 3032,
+  EXPORT_REQUEST_EXPIRED = 3033,
+  DELETION_REQUEST_NOT_FOUND = 3040,
+  DELETION_REQUEST_EXPIRED = 3041,
+  DELETION_REQUEST_ALREADY_EXECUTED = 3042,
+  DELETION_REQUEST_INVALID_SCOPE = 3043,
+  CONSENT_VERSION_REQUIRED = 3050,
+  CONSENT_VERSION_OUTDATED = 3051,
+  AUDIT_LOG_NOT_FOUND = 3060,
+  PDF_GENERATION_FAILED = 3070,
+  PDF_DRAFT_NOT_PUBLISHED = 3071,
+  PDF_FONT_NOT_FOUND = 3072,
 
   // 5xxx AI
   AI_UPSTREAM_ERROR = 5001,
@@ -251,3 +273,75 @@ export interface PublishDraftReq {
   title?: string
   cover?: string
 }
+
+// ============ M5 业务类型 ============
+
+/** 分享 scope */
+export type ShareScope = 'public' | 'password'
+
+/** 分享状态 */
+export type ShareStatus = 'active' | 'expired' | 'revoked'
+
+/** Owner 端分享链接 VO */
+export interface ShareLinkVO {
+  id: string
+  projectId: string
+  draftId: string
+  draftTitle?: string
+  scope: ShareScope
+  /** 32 字符 URL-safe base64 token */
+  token: string
+  shareUrl: string
+  allowCopy: boolean
+  allowDownload: boolean
+  viewCount: number
+  createdByName?: string
+  createdAt?: string
+  expiresAt?: string
+  lastAccessedAt?: string
+  status: ShareStatus
+  hasPassword: boolean
+}
+
+/** 创建分享请求 */
+export interface CreateShareReq {
+  draftId: string | number
+  scope: ShareScope
+  password?: string
+  expiresInDays?: number
+  allowCopy?: boolean
+  allowDownload?: boolean
+  subjectIds?: string[]
+}
+
+/** 公开端章节（精简版，不带 factsUsed 等内部字段） */
+export interface PublicSectionVO {
+  sectionId: string
+  sectionTitle: string
+  order: number
+  content: string
+  provenance: SectionProvenance
+  aiGenerated: boolean
+}
+
+/** 公开端分享 VO（不需 JWT） */
+export interface PublicShareVO {
+  token: string
+  draftId: string
+  draftTitle?: string
+  scope: ShareScope
+  allowCopy: boolean
+  allowDownload: boolean
+  createdByName?: string
+  createdAt?: string
+  expiresAt?: string
+  hasAiContent: boolean
+  aiLabel?: string
+  sections?: PublicSectionVO[]
+}
+
+/** 公开端密码验证请求 */
+export interface PublicShareVerifyReq {
+  password: string
+}
+

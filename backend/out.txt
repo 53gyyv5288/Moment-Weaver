@@ -1,0 +1,38 @@
+Compiled from "PdfFontFactory.java"
+public final class com.itextpdf.kernel.font.PdfFontFactory {
+  public com.itextpdf.kernel.font.PdfFontFactory();
+  public static com.itextpdf.kernel.font.PdfFont createFont() throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(com.itextpdf.kernel.pdf.PdfDictionary);
+  public static com.itextpdf.kernel.font.PdfFont createFont(java.lang.String, java.lang.String, com.itextpdf.kernel.pdf.PdfDocument) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(java.lang.String, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy, com.itextpdf.kernel.pdf.PdfDocument) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(java.lang.String) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(java.lang.String, java.lang.String) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(java.lang.String, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(java.lang.String, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy, boolean) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(com.itextpdf.io.font.FontProgram, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy);
+  public static com.itextpdf.kernel.font.PdfFont createFont(com.itextpdf.io.font.FontProgram, java.lang.String);
+  public static com.itextpdf.kernel.font.PdfFont createFont(com.itextpdf.io.font.FontProgram);
+  public static com.itextpdf.kernel.font.PdfFont createFont(byte[], java.lang.String) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(byte[], com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(byte[], java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createFont(byte[], java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy, boolean) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createTtcFont(byte[], int, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy, boolean) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createTtcFont(java.lang.String, int, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy, boolean) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfType3Font createType3Font(com.itextpdf.kernel.pdf.PdfDocument, boolean);
+  public static com.itextpdf.kernel.font.PdfType3Font createType3Font(com.itextpdf.kernel.pdf.PdfDocument, java.lang.String, java.lang.String, boolean);
+  public static com.itextpdf.kernel.font.PdfFont createRegisteredFont(java.lang.String, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy, int, boolean) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createRegisteredFont(java.lang.String, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy, boolean) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createRegisteredFont(java.lang.String, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createRegisteredFont(java.lang.String, java.lang.String, com.itextpdf.kernel.font.PdfFontFactory$EmbeddingStrategy, int) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createRegisteredFont(java.lang.String, java.lang.String) throws java.io.IOException;
+  public static com.itextpdf.kernel.font.PdfFont createRegisteredFont(java.lang.String) throws java.io.IOException;
+  public static void registerFamily(java.lang.String, java.lang.String, java.lang.String);
+  public static void register(java.lang.String);
+  public static void register(java.lang.String, java.lang.String);
+  public static int registerDirectory(java.lang.String);
+  public static int registerSystemDirectories();
+  public static java.util.Set<java.lang.String> getRegisteredFonts();
+  public static java.util.Set<java.lang.String> getRegisteredFamilies();
+  public static boolean isRegistered(java.lang.String);
+}

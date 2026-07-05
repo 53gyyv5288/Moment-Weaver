@@ -2,12 +2,14 @@
 /**
  * 成稿阅读器 (M4)。
  * 适合发布的优雅阅读视图；章节按 order 排序，每章顶部带 ProvenanceBadge。
+ * M5-A：在顶部增加「含 AI 内容」横幅（合规自检 #5），加「分享给他人」入口。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { EditPen } from '@element-plus/icons-vue'
+import { EditPen, Share, Download } from '@element-plus/icons-vue'
 import { getDraft } from '@/api/draft'
+import { exportOwnerPdf } from '@/api/share'
 import type { NarrativeDraftVO, SectionVO } from '@/types/api'
 import ProvenanceBadge from '@/components/ProvenanceBadge.vue'
 
@@ -43,6 +45,28 @@ function onEdit() {
   router.push(`/drafts/${draftId.value}/edit`)
 }
 
+function onShare() {
+  if (!draft.value?.projectId) return
+  router.push(`/projects/${draft.value.projectId}/shares`)
+}
+
+const exportingPdf = ref(false)
+async function onExportPdf() {
+  if (exportingPdf.value) return
+  exportingPdf.value = true
+  try {
+    const { data } = await exportOwnerPdf(draftId.value)
+    if (data?.code === 0 && data.data?.signedUrl) {
+      ElMessage.success('PDF 已生成，正在下载')
+      window.open(data.data.signedUrl, '_blank', 'noopener')
+    } else {
+      ElMessage.error(data?.message || 'PDF 导出失败')
+    }
+  } finally {
+    exportingPdf.value = false
+  }
+}
+
 function onBack() {
   if (draft.value?.projectId) {
     router.push(`/projects/${draft.value.projectId}/drafts`)
@@ -65,17 +89,45 @@ onMounted(load)
   <div class="dr" v-loading="loading">
     <header class="dr__head">
       <el-button text @click="onBack">← 返回</el-button>
-      <el-button
-        v-if="draft && draft.status !== 'published'"
-        :icon="EditPen"
-        plain
-        @click="onEdit"
-      >
-        去编辑
-      </el-button>
+      <div class="dr__headRight">
+        <el-button
+          v-if="draft && draft.status === 'published'"
+          :icon="Download"
+          plain
+          :loading="exportingPdf"
+          @click="onExportPdf"
+        >
+          导出 PDF
+        </el-button>
+        <el-button
+          v-if="draft && draft.status === 'published'"
+          :icon="Share"
+          plain
+          @click="onShare"
+        >
+          分享给他人
+        </el-button>
+        <el-button
+          v-if="draft && draft.status !== 'published'"
+          :icon="EditPen"
+          plain
+          @click="onEdit"
+        >
+          去编辑
+        </el-button>
+      </div>
     </header>
 
     <article v-if="draft" class="dr__body">
+      <!-- M5-A 合规自检 #5：含 AI 内容横幅，不可关闭 -->
+      <el-alert
+        title="本文含 AI 生成内容"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="dr__aiAlert"
+      />
+
       <div class="dr__cover">
         <el-tag size="small" effect="plain">{{ TEMPLATE_LABELS[draft.templateId] || draft.templateId }}</el-tag>
         <h1 class="dr__title">{{ draft.title || '（未命名）' }}</h1>
@@ -122,6 +174,8 @@ onMounted(load)
   background: #fff; border-radius: 12px; padding: 56px 64px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
+.dr__aiAlert { margin-bottom: 24px; }
+.dr__headRight { display: flex; gap: 8px; }
 
 .dr__cover {
   text-align: center; padding-bottom: 32px;

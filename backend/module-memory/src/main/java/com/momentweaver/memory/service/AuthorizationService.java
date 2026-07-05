@@ -7,6 +7,7 @@ import com.momentweaver.account.mapper.ProjectMapper;
 import com.momentweaver.account.mapper.WorkspaceMemberMapper;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
+import com.momentweaver.common.event.AuthorizationRevokedEvent;
 import com.momentweaver.memory.dto.AuthorizationCreateRequest;
 import com.momentweaver.memory.dto.AuthorizationVO;
 import com.momentweaver.memory.entity.Authorization;
@@ -15,6 +16,7 @@ import com.momentweaver.memory.mapper.AuthorizationMapper;
 import com.momentweaver.memory.mapper.SubjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +39,7 @@ public class AuthorizationService {
     private final SubjectMapper subjectMapper;
     private final ProjectMapper projectMapper;
     private final WorkspaceMemberMapper workspaceMemberMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Value("${moment.consent.current-version}")
     private String consentVersion;
@@ -149,6 +152,28 @@ public class AuthorizationService {
             authorizationMapper.updateById(a);
         } else {
             throw new BusinessException(ResultCode.BAD_REQUEST, "当前状态不可撤销: " + a.getStatus());
+        }
+
+        // M5-B.2: 发布撤回事件，让 timeline / share / notification 模块各自级联
+        String subjectDisplayName = resolveSubjectDisplayName(a.getSubjectId());
+        eventPublisher.publishEvent(new AuthorizationRevokedEvent(
+            userId,
+            a.getId(),
+            a.getProjectId(),
+            p.getOwnerId(),
+            String.valueOf(a.getSubjectId()),
+            subjectDisplayName,
+            "Owner 主动撤销"
+        ));
+    }
+
+    private String resolveSubjectDisplayName(Long subjectId) {
+        if (subjectId == null) return null;
+        try {
+            Subject s = subjectMapper.selectById(subjectId);
+            return s == null ? null : s.getDisplayName();
+        } catch (Exception e) {
+            return null;
         }
     }
 

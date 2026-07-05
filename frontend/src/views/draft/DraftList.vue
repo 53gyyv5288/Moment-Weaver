@@ -6,7 +6,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Document, View, EditPen, MagicStick } from '@element-plus/icons-vue'
+import { Plus, Document, View, EditPen, MagicStick, Share } from '@element-plus/icons-vue'
 import { listDrafts } from '@/api/draft'
 import { listSubjects } from '@/api/subject'
 import type { NarrativeDraftVO, SubjectVO } from '@/types/api'
@@ -138,6 +138,7 @@ onMounted(() => { loadSubjects(); load() })
         <h2>成稿</h2>
         <p class="muted">基于采访消息、素材和备注，由 AI 生成结构化叙事</p>
       </div>
+      <el-button :icon="Share" plain @click="router.push(`/projects/${projectId}/shares`)">分享管理</el-button>
       <el-button type="primary" :icon="Plus" @click="showPicker = true">新建成稿</el-button>
     </header>
 

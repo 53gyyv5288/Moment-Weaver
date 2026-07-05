@@ -90,6 +90,18 @@
             <groupId>com.momentweaver</groupId>
             <artifactId>module-compliance</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-share</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-notification</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-export</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

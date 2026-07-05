@@ -7,6 +7,8 @@ import com.momentweaver.account.mapper.ProjectMapper;
 import com.momentweaver.account.mapper.WorkspaceMemberMapper;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
+import com.momentweaver.common.event.NotificationRequest;
+import com.momentweaver.common.event.NotificationTypes;
 import com.momentweaver.common.event.TimelineEventRequest;
 import com.momentweaver.common.event.TimelineEventTypes;
 import com.momentweaver.memory.entity.InterviewMessage;
@@ -368,7 +370,34 @@ public class DraftService {
             meta
         ));
 
+        // 发通知给工作区其他成员（不发给自己，避免噪音）
+        notifyWorkspaceMembers(p.getWorkspaceId(), userId, d, draftId, meta);
+
         return toVO(d);
+    }
+
+    private void notifyWorkspaceMembers(Long workspaceId, Long publisherId,
+                                        NarrativeDraft d, String draftId,
+                                        Map<String, Object> meta) {
+        if (workspaceId == null) return;
+        List<WorkspaceMember> members = workspaceMemberMapper.selectList(
+            new LambdaQueryWrapper<WorkspaceMember>().eq(WorkspaceMember::getWorkspaceId, workspaceId)
+        );
+        String title = d.getTitle() == null ? "未命名" : d.getTitle();
+        String body = String.format("《%s》已发布，可阅读 / 分享", title);
+        for (WorkspaceMember m : members) {
+            Long memberId = m.getUserId();
+            if (memberId == null || memberId.equals(publisherId)) continue;
+            eventPublisher.publishEvent(new NotificationRequest(
+                memberId,
+                NotificationTypes.DRAFT_PUBLISHED,
+                "成稿已发布",
+                body,
+                draftId,
+                "/drafts/" + draftId + "/read",
+                meta
+            ));
+        }
     }
 
     // ============ AI helpers ============

@@ -25,6 +25,9 @@
         <module>module-memory</module>
         <module>module-timeline</module>
         <module>module-compliance</module>
+        <module>module-share</module>
+        <module>module-notification</module>
+        <module>module-export</module>
     </modules>
 
     <properties>
@@ -67,6 +70,21 @@
             <dependency>
                 <groupId>com.momentweaver</groupId>
                 <artifactId>module-compliance</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.momentweaver</groupId>
+                <artifactId>module-share</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.momentweaver</groupId>
+                <artifactId>module-notification</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.momentweaver</groupId>
+                <artifactId>module-export</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

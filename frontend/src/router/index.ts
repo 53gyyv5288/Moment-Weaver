@@ -27,6 +27,14 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '连通性自检' },
   },
 
+  // M5-B.3: 隐私政策 / 用户协议（公开）
+  {
+    path: '/privacy',
+    name: 'privacy',
+    component: () => import('@/views/Privacy.vue'),
+    meta: { public: true, layout: 'blank', title: '隐私政策' },
+  },
+
   // 鉴权页（带 Layout）
   {
     path: '/',
@@ -93,6 +101,27 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/draft/DraftReader.vue'),
         meta: { title: '成稿阅读' },
       },
+      // M5-A: 分享管理
+      {
+        path: 'projects/:id/shares',
+        name: 'project-shares',
+        component: () => import('@/views/share/ShareManage.vue'),
+        meta: { title: '分享管理' },
+      },
+      // M5-A.2: 通知中心
+      {
+        path: 'notifications',
+        name: 'notifications',
+        component: () => import('@/views/notification/NotificationList.vue'),
+        meta: { title: '通知中心' },
+      },
+      // M5-B: 合规中心
+      {
+        path: 'compliance',
+        name: 'compliance',
+        component: () => import('@/views/compliance/ComplianceCenter.vue'),
+        meta: { title: '合规中心' },
+      },
     ],
   },
 
@@ -102,6 +131,14 @@ const routes: RouteRecordRaw[] = [
     name: 'consent',
     component: () => import('@/views/authorization/Consent.vue'),
     meta: { public: true, layout: 'blank', title: '知情同意' },
+  },
+
+  // 公开分享阅读页（无 Layout，无 JWT）
+  {
+    path: '/share/:token',
+    name: 'public-share',
+    component: () => import('@/views/share/PublicShareView.vue'),
+    meta: { public: true, layout: 'blank', title: '分享阅读' },
   },
 
   // 兜底

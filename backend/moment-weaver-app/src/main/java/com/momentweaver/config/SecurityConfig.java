@@ -35,13 +35,14 @@ public class SecurityConfig {
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .exceptionHandling(e -> e.authenticationEntryPoint(authEntryPoint))
             .authorizeHttpRequests(auth -> auth
-                // 公开：注册/登录/健康检查/公开授权/swagger
+                // 公开：注册/登录/健康检查/公开授权/公开分享/swagger
                 .requestMatchers(
                     "/api/v1/auth/register",
                     "/api/v1/auth/login",
                     "/api/v1/healthz",
                     "/api/v1/readyz",
                     "/api/v1/public/authz/**",
+                    "/api/v1/public/shares/**",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",
                     "/swagger-ui.html",

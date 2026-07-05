@@ -49,6 +49,12 @@ public class NarrativeDraft {
     @Indexed
     private List<String> subjectIds;
 
+    /** 因授权撤回而脱敏的 subjectId 列表（M5-B.2 撤回级联）。 */
+    private List<String> withdrawnSubjectIds = new ArrayList<>();
+
+    /** 最近一次撤回/脱敏时间。 */
+    private LocalDateTime withdrawnAt;
+
     private List<String> subjectDisplayNames;
 
     private String title;
