@@ -6,6 +6,7 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
 from app.services.llm import LlmError, chat
 from app.services.prompts import build_summary_messages
 
@@ -30,7 +31,8 @@ def _extract_json(text: str) -> dict:
     优先级：
       1) 整段本身就是合法 JSON
       2) 首段 {...}（处理「以下是 JSON：{...}」类话痨模型）
-      3) 兜底抛错
+      3) 截断自救：从末尾往前找最后一个合法 JSON 位置 parse（兜底 max_tokens 截断）
+      4) 兜底抛错
     """
     text = text.strip()
     if not text:
@@ -47,7 +49,32 @@ def _extract_json(text: str) -> dict:
             return json.loads(m.group(0))
         except json.JSONDecodeError as e:
             log.warning("LLM output JSON extract failed: %s; raw[:200]=%s", e, text[:200])
+    # 3) 截断自救：LLM 用完 max_tokens 写到一半戛然而止（MiniMax-M3 推理链吃 token 多）
+    repaired = _repair_truncated_json(text)
+    if repaired is not None:
+        log.warning("LLM output truncated, repaired partial JSON; raw[:200]=%s", text[:200])
+        return repaired
     raise ValueError(f"无法从 LLM 输出解析 JSON：{text[:200]}")
+
+
+def _repair_truncated_json(text: str) -> dict | None:
+    """
+    LLM 写到一半被 max_tokens 截断时（如 "...,\" 这种结尾），
+    从末尾往前找最后一个 } 位置，逐步截短尝试 parse。
+    返回 dict；都不行返回 None。
+    """
+    last_close = text.rfind('}')
+    attempts = 0
+    while last_close > 0 and attempts < 50:
+        try:
+            obj = json.loads(text[:last_close + 1])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        last_close = text.rfind('}', 0, last_close)
+        attempts += 1
+    return None
 
 
 def _coerce_summary(obj: dict) -> dict:
@@ -95,8 +122,9 @@ async def summarize(req: SummarizeRequest) -> dict:
         "summarize start: session=%s subject=%s raw_msgs=%d",
         req.session_id, req.subject_hint, len(req.messages),
     )
+    settings = get_settings()
     try:
-        raw = await chat(msgs, temperature=0.1, max_tokens=1024)
+        raw = await chat(msgs, temperature=0.1, max_tokens=settings.llm_summarize_max_tokens)
         obj = _extract_json(raw)
         summary = _coerce_summary(obj)
     except LlmError as e:

@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     # 单次实测 4~6 分钟，bump 到 600s 留 1.5x 余量
     llm_timeout_s: float = 600.0
     llm_max_tokens: int = 1024
+    # 摘要专用：MiniMax-M3 推理链吃 token 多，全局 1024 不够；summarize.py 单独读这个
+    llm_summarize_max_tokens: int = 2048
     llm_temperature: float = 0.7
 
     # 历史供应商（保留兼容）
