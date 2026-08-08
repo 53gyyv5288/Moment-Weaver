@@ -5,16 +5,16 @@
  * 路由：/projects/:id/shares
  */
 import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Link, Delete, Document } from '@element-plus/icons-vue'
 import { listShares, revokeShare, type ShareLinkVO } from '@/api/share'
 import { listDrafts } from '@/api/draft'
 import type { NarrativeDraftVO } from '@/types/api'
+import { formatDateTime } from '@/utils/format'
 import ShareCreateDialog from './ShareCreateDialog.vue'
 
 const route = useRoute()
-const router = useRouter()
 const projectId = computed(() => route.params.id as string)
 
 const shares = ref<ShareLinkVO[]>([])
@@ -89,10 +89,7 @@ function onOpenShare(s: ShareLinkVO) {
 }
 
 function formatTime(s?: string) {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (isNaN(d.getTime())) return s
-  return d.toLocaleString('zh-CN', { hour12: false })
+  return formatDateTime(s) || '—'
 }
 
 onMounted(() => { loadDrafts(); load() })
@@ -100,20 +97,16 @@ onMounted(() => { loadDrafts(); load() })
 
 <template>
   <div class="sm" v-loading="loading">
-    <header class="sm__head">
-      <el-button text @click="router.push(`/projects/${projectId}`)">← 返回项目详情</el-button>
-      <div class="sm__title">
-        <h2>分享管理</h2>
-        <p class="muted">将已发布的成稿通过公开链接或密码链接分享给他人阅读</p>
-      </div>
+    <div class="sm__bar">
+      <span class="muted">将已发布的成稿通过公开链接或密码链接分享给他人阅读</span>
       <el-button type="primary" :icon="Link" @click="onCreate()">新建分享</el-button>
-    </header>
+    </div>
 
     <el-empty
       v-if="!loading && shares.length === 0"
       :description="drafts.length === 0
-        ? '该项目暂无已发布的成稿，请先到成稿页发布后再分享'
-        : '还没有分享链接，点击右上角「新建分享」开始'"
+        ? '该项目暂无已发布的成稿，请先到「成稿」页发布后再分享'
+        : '还没有分享链接，点击「新建分享」开始'"
     />
 
     <div v-else class="sm__list">
@@ -179,44 +172,44 @@ onMounted(() => { loadDrafts(); load() })
 </template>
 
 <style scoped>
-.sm { max-width: 960px; margin: 0 auto; }
-.sm__head {
-  display: flex; align-items: center; gap: 16px;
-  padding-bottom: 12px; border-bottom: 1px solid #e5e7eb; margin-bottom: 16px;
+.sm { width: 100%; max-width: 960px; }
+.sm__bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px; background: var(--mw-surface); border-radius: var(--mw-radius);
+  border: 1px solid var(--mw-border); margin-bottom: 16px;
 }
-.sm__title { flex: 1; }
-.sm__title h2 { margin: 0; }
-.muted { color: #6b7280; font-size: 13px; margin: 4px 0 0; }
+.muted { color: var(--mw-text-secondary); font-size: 13px; }
 
 .sm__list { display: flex; flex-direction: column; gap: 12px; }
 .sm__card {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+  background: var(--mw-surface); border: 1px solid var(--mw-border);
+  border-radius: var(--mw-radius);
   padding: 16px; display: flex; flex-direction: column; gap: 12px;
 }
 .sm__cardHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sm__cardTitle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
 .sm__emoji { font-size: 18px; }
 .sm__titleText {
-  font-size: 15px; font-weight: 500; color: #1f2937;
+  font-size: 15px; font-weight: 500; color: var(--mw-text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .sm__cardBody { display: flex; flex-direction: column; gap: 8px; }
 .sm__urlRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sm__url {
   flex: 1; min-width: 200px; padding: 6px 10px;
-  background: #f3f4f6; border-radius: 4px;
+  background: var(--mw-cream); border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px; color: #4b5563;
+  font-size: 12px; color: var(--mw-text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .sm__meta {
   display: flex; gap: 12px; flex-wrap: wrap;
-  font-size: 12px; color: #9ca3af;
+  font-size: 12px; color: var(--mw-text-muted);
 }
 .sm__perms { display: flex; gap: 6px; }
 .sm__cardFoot {
   display: flex; justify-content: flex-end;
-  padding-top: 8px; border-top: 1px dashed #e5e7eb;
+  padding-top: 8px; border-top: 1px dashed var(--mw-border);
 }
-.sm__dead { color: #d1d5db; font-size: 12px; }
+.sm__dead { color: var(--mw-text-muted); font-size: 12px; }
 </style>

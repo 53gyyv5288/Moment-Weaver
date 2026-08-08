@@ -5,7 +5,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Plus, ChatLineRound, Delete, Link, Edit } from '@element-plus/icons-vue'
+import { CopyDocument, Plus, ChatLineRound, Delete, Link, Edit, ArrowDown } from '@element-plus/icons-vue'
 import {
   listSubjects,
   createSubject,
@@ -22,12 +22,13 @@ import {
 import { startInterview } from '@/api/interview'
 import AssetUploader from '@/views/asset/AssetUploader.vue'
 import AssetList from '@/views/asset/AssetList.vue'
+import { formatDateTime } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
 const projectId = computed(() => route.params.id as string)
 
-const project = ref<any>(null)
+// 项目名称 / 类型 / 描述由 ProjectLayout 页头承担，本页只管人物 + 授权 + 素材
 const subjects = ref<SubjectVO[]>([])
 const authorizations = ref<AuthorizationVO[]>([])
 const loading = ref(false)
@@ -62,17 +63,7 @@ async function load() {
   }
 }
 
-async function loadProject() {
-  // 简单调一下 ProjectController.get
-  const { getProject } = await import('@/api/project')
-  const { data } = await getProject(projectId.value)
-  if (data && data.code === 0) project.value = data.data
-}
-
-onMounted(async () => {
-  await loadProject()
-  await load()
-})
+onMounted(load)
 
 async function onAddSubject() {
   if (!newSubject.value.displayName.trim()) {
@@ -224,17 +215,6 @@ function loadAssets() {
 
 <template>
   <div class="pd" v-loading="loading">
-    <header class="pd__head">
-      <el-button text @click="router.push('/projects')">← 返回项目列表</el-button>
-      <h2>{{ project?.name || '项目详情' }}</h2>
-      <p class="pd__sub">
-        <el-tag v-if="project" :type="project.type === 'family' ? 'success' : 'primary'" size="small">
-          {{ project.type === 'family' ? '家族' : '个人' }}
-        </el-tag>
-        <span v-if="project?.description">{{ project.description }}</span>
-      </p>
-    </header>
-
     <el-tabs>
       <!-- ============== 人物 ============== -->
       <el-tab-pane label="被采访者">
@@ -249,8 +229,13 @@ function loadAssets() {
 
         <el-table v-else :data="subjects" stripe>
           <el-table-column prop="displayName" label="姓名" width="160" />
-          <el-table-column prop="relation" label="关系" width="120" />
-          <el-table-column label="最新授权">
+          <el-table-column label="关系" width="120">
+            <template #default="{ row }">
+              <span v-if="row.relation">{{ row.relation }}</span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="最新授权" width="120">
             <template #default="{ row }">
               <el-tag v-if="row.latestAuthStatus" :type="statusType(row.latestAuthStatus)" size="small">
                 {{ statusLabel(row.latestAuthStatus) }}
@@ -258,8 +243,13 @@ function loadAssets() {
               <span v-else class="muted">未发起</span>
             </template>
           </el-table-column>
-          <el-table-column prop="note" label="备注" show-overflow-tooltip />
-          <el-table-column label="操作" width="320" fixed="right">
+          <el-table-column label="备注" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.note">{{ row.note }}</span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="240" align="right" fixed="right">
             <template #default="{ row }">
               <el-button size="small" :icon="Link" @click="newAuthz.subjectId = row.id; showCreateAuthz = true">
                 发起授权
@@ -273,8 +263,15 @@ function loadAssets() {
               >
                 采访
               </el-button>
-              <el-button size="small" :icon="Edit" @click="onOpenEditSubject(row)">编辑</el-button>
-              <el-button size="small" type="danger" :icon="Delete" @click="onDeleteSubject(row)" />
+              <el-dropdown trigger="click" @command="(c: string) => c === 'edit' ? onOpenEditSubject(row) : onDeleteSubject(row)">
+                <el-button size="small" :icon="ArrowDown" />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="edit" :icon="Edit">编辑</el-dropdown-item>
+                    <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </el-table-column>
         </el-table>
@@ -304,7 +301,12 @@ function loadAssets() {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="expiresAt" label="过期" width="200" />
+          <el-table-column label="过期" width="180">
+            <template #default="{ row }">
+              <span v-if="row.expiresAt">{{ formatDateTime(row.expiresAt) }}</span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
               <el-button v-if="row.publicUrl" size="small" :icon="CopyDocument" @click="copyUrl(row)">复制链接</el-button>
@@ -409,10 +411,7 @@ function loadAssets() {
 </template>
 
 <style scoped>
-.pd { max-width: 1100px; margin: 0 auto; }
-.pd__head { margin-bottom: 16px; }
-.pd__head h2 { margin: 8px 0 4px; }
-.pd__sub { color: #6b7280; display: flex; gap: 8px; align-items: center; }
+.pd { width: 100%; }
 .pd__actions { margin-bottom: 12px; }
-.muted { color: #9ca3af; }
+.muted { color: var(--mw-text-muted); }
 </style>

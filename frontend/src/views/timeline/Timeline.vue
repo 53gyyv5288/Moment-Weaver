@@ -142,11 +142,6 @@ onMounted(() => { loadSubjects(); load() })
 
 <template>
   <div class="tl">
-    <header class="tl__head">
-      <h2>时间线</h2>
-      <p class="muted">把采访消息、上传素材、AI 摘要和成稿动态按时间串起来</p>
-    </header>
-
     <div class="tl__bar">
       <el-select v-model="filterSubject" placeholder="全部人物" clearable size="default" style="width: 180px">
         <el-option
@@ -169,7 +164,7 @@ onMounted(() => { loadSubjects(); load() })
 
     <div v-loading="loading" class="tl__body">
       <div v-if="!loading && items.length === 0" class="tl__empty">
-        <p>暂无事件。开始采访、上传素材或新建成稿试试。</p>
+        <p>暂无事件。开始采访、上传素材或新建成稿，动态会按时间串在这里。</p>
       </div>
 
       <section v-for="g in grouped" :key="g.key" class="tl__day">
@@ -198,20 +193,18 @@ onMounted(() => { loadSubjects(); load() })
 </template>
 
 <style scoped>
-.tl { max-width: 880px; margin: 0 auto; }
-.tl__head h2 { margin: 0 0 4px; }
-.muted { color: #9ca3af; font-size: 13px; margin: 0 0 16px; }
+.tl { max-width: 880px; }
 .tl__bar {
   display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-  padding: 12px; background: #fff; border-radius: 8px;
-  border: 1px solid #e5e7eb; margin-bottom: 16px;
+  padding: 12px; background: var(--mw-surface); border-radius: var(--mw-radius);
+  border: 1px solid var(--mw-border); margin-bottom: 16px;
 }
-.tl__count { color: #9ca3af; font-size: 12px; }
+.tl__count { color: var(--mw-text-muted); font-size: 12px; margin-left: auto; }
 .tl__body { padding: 0 4px; }
 .tl__day { margin-bottom: 24px; }
 .tl__dayHead {
-  font-size: 12px; font-weight: 600; color: #6b7280;
-  padding: 6px 0; border-bottom: 1px dashed #e5e7eb; margin-bottom: 8px;
+  font-size: 12px; font-weight: 600; color: var(--mw-text-secondary);
+  padding: 6px 0; border-bottom: 1px dashed var(--mw-border); margin-bottom: 8px;
 }
 .tl__items {
   display: flex; flex-direction: column; gap: 8px;
@@ -219,23 +212,24 @@ onMounted(() => { loadSubjects(); load() })
 .tl__item {
   display: flex; gap: 12px;
   padding: 10px 12px;
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 6px;
+  background: var(--mw-surface); border: 1px solid var(--mw-border);
+  border-radius: var(--mw-radius-sm);
   cursor: pointer; transition: all 0.15s;
 }
-.tl__item:hover { border-color: #2563eb; transform: translateX(2px); }
+.tl__item:hover { border-color: var(--mw-primary); transform: translateX(2px); }
 .tl__dot {
   flex-shrink: 0; width: 32px; height: 32px;
   display: flex; align-items: center; justify-content: center;
-  background: #f3f4f6; border-radius: 50%; font-size: 16px;
+  background: var(--mw-cream); border-radius: 50%; font-size: 16px;
 }
 .tl__content { flex: 1; min-width: 0; }
 .tl__meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.tl__time { color: #9ca3af; font-size: 11px; }
-.tl__title { color: #1f2937; font-size: 14px; font-weight: 500; }
+.tl__time { color: var(--mw-text-muted); font-size: 11px; }
+.tl__title { color: var(--mw-text); font-size: 14px; font-weight: 500; }
 .tl__preview {
-  color: #6b7280; font-size: 13px; margin-top: 4px;
+  color: var(--mw-text-secondary); font-size: 13px; margin-top: 4px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.tl__empty { text-align: center; color: #9ca3af; padding: 60px 0; }
+.tl__empty { text-align: center; color: var(--mw-text-muted); padding: 60px 0; }
 </style>

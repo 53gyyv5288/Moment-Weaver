@@ -52,11 +52,41 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/project/ProjectCreate.vue'),
         meta: { title: '新建项目' },
       },
+      // 项目级外壳：统一页头 + 二级导航（概览 / 时间线 / 成稿 / 分享）。
+      // 必须排在 'projects/new' 之后，否则 new 会被 :id 匹配掉。
       {
         path: 'projects/:id',
-        name: 'project-detail',
-        component: () => import('@/views/project/ProjectDetail.vue'),
-        meta: { title: '项目详情' },
+        component: () => import('@/views/project/ProjectLayout.vue'),
+        // ProjectLayout 自带「← 我的项目 + 项目名」页头，顶部面包屑不再重复
+        meta: { hideCrumb: true },
+        children: [
+          {
+            path: '',
+            name: 'project-detail',
+            component: () => import('@/views/project/ProjectDetail.vue'),
+            meta: { title: '项目概览' },
+          },
+          {
+            path: 'timeline',
+            name: 'project-timeline',
+            component: () => import('@/views/timeline/Timeline.vue'),
+            meta: { title: '时间线' },
+          },
+          // M4: 成稿
+          {
+            path: 'drafts',
+            name: 'project-drafts',
+            component: () => import('@/views/draft/DraftList.vue'),
+            meta: { title: '成稿' },
+          },
+          // M5-A: 分享管理
+          {
+            path: 'shares',
+            name: 'project-shares',
+            component: () => import('@/views/share/ShareManage.vue'),
+            meta: { title: '分享管理' },
+          },
+        ],
       },
       {
         path: 'interview/:id',
@@ -71,24 +101,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '采访摘要' },
       },
       {
-        path: 'projects/:id/timeline',
-        name: 'project-timeline',
-        component: () => import('@/views/timeline/Timeline.vue'),
-        meta: { title: '时间线' },
-      },
-      {
         path: 'timeline/event/:eventId',
         name: 'timeline-event',
         component: () => import('@/views/timeline/MomentDetail.vue'),
         meta: { title: '事件详情' },
       },
-      // M4: 成稿
-      {
-        path: 'projects/:id/drafts',
-        name: 'project-drafts',
-        component: () => import('@/views/draft/DraftList.vue'),
-        meta: { title: '成稿' },
-      },
+      // M4: 成稿编辑 / 阅读（不属于项目二级导航，独立全屏页）
       {
         path: 'drafts/:did/edit',
         name: 'draft-edit',
@@ -100,13 +118,6 @@ const routes: RouteRecordRaw[] = [
         name: 'draft-read',
         component: () => import('@/views/draft/DraftReader.vue'),
         meta: { title: '成稿阅读' },
-      },
-      // M5-A: 分享管理
-      {
-        path: 'projects/:id/shares',
-        name: 'project-shares',
-        component: () => import('@/views/share/ShareManage.vue'),
-        meta: { title: '分享管理' },
       },
       // M5-A.2: 通知中心
       {

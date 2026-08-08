@@ -11,14 +11,18 @@ const notification = useNotificationStore()
 const router = useRouter()
 const route = useRoute()
 
-const breadcrumb = computed(() => (route.meta?.title as string) || '')
+// 顶栏只承载全局导航；项目级入口（时间线 / 成稿 / 分享）由 ProjectLayout 提供。
+// 停留在项目子页时，顶栏仍高亮「我的项目」。
+const activeMenu = computed(() =>
+  route.path.startsWith('/projects') ? '/projects' : route.path,
+)
 
-// 只在「项目相关页」露出时间线入口
-const currentProjectId = computed<string | null>(() => {
-  const m = route.path.match(/^\/projects\/(\d+)/)
-  if (m && route.path !== '/projects/new') return m[1]
-  // 也支持从 interview/:id 解析（采访会话里有 projectId，可后续优化）
-  return null
+// 面包屑：项目子页由 ProjectLayout 自带「← 我的项目 + 项目名」页头，
+// 这里不再重复（meta.hideCrumb 由 projects/:id 父路由下发，子路由自动继承）。
+const crumbs = computed(() => {
+  if (route.meta?.hideCrumb) return []
+  const title = route.meta?.title as string | undefined
+  return title ? [{ title, path: route.path }] : []
 })
 
 async function handleLogout() {
@@ -48,20 +52,19 @@ onUnmounted(() => {
 <template>
   <el-container class="layout">
     <el-header class="layout__header">
-      <div class="layout__brand">
+      <div class="layout__brand" @click="router.push('/projects')">
         <span class="layout__logo">⏳</span>
         <span class="layout__title">Moment Weaver</span>
         <span class="layout__sub">时光编织者</span>
       </div>
       <el-menu
         mode="horizontal"
-        :default-active="route.path"
+        :default-active="activeMenu"
+        :ellipsis="false"
         router
         class="layout__menu"
       >
         <el-menu-item index="/projects">我的项目</el-menu-item>
-        <el-menu-item v-if="currentProjectId" :index="`/projects/${currentProjectId}/drafts`">成稿</el-menu-item>
-        <el-menu-item v-if="currentProjectId" :index="`/projects/${currentProjectId}/timeline`">时间线</el-menu-item>
         <el-menu-item index="/notifications">通知</el-menu-item>
         <el-menu-item index="/compliance">合规</el-menu-item>
       </el-menu>
@@ -73,7 +76,11 @@ onUnmounted(() => {
     </el-header>
 
     <el-main class="layout__main">
-      <div class="layout__crumb">{{ breadcrumb }}</div>
+      <el-breadcrumb v-if="crumbs.length" class="layout__crumb" separator="/">
+        <el-breadcrumb-item v-for="c in crumbs" :key="c.path">
+          {{ c.title }}
+        </el-breadcrumb-item>
+      </el-breadcrumb>
       <RouterView />
     </el-main>
 
@@ -86,21 +93,23 @@ onUnmounted(() => {
 <style scoped>
 .layout {
   min-height: 100vh;
-  background: #f5f7fa;
+  background: var(--mw-bg);
 }
 .layout__header {
   display: flex;
   align-items: center;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 0 24px;
+  background: var(--mw-surface);
+  border-bottom: 1px solid var(--mw-border);
+  padding: 0 28px;
   height: 60px;
 }
 .layout__brand {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-right: 32px;
+  margin-right: 40px;
+  cursor: pointer;
+  user-select: none;
 }
 .layout__logo {
   font-size: 22px;
@@ -108,40 +117,47 @@ onUnmounted(() => {
 .layout__title {
   font-size: 18px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--mw-text);
+  letter-spacing: 0.3px;
 }
 .layout__sub {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--mw-text-muted);
 }
 .layout__menu {
   flex: 1;
   border-bottom: none !important;
+  background: transparent;
+}
+.layout__menu :deep(.el-menu-item) {
+  height: 59px;
+  line-height: 59px;
+  font-size: 14px;
 }
 .layout__user {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
 }
 .layout__bell { margin-right: 4px; }
 .layout__name {
-  color: #4b5563;
+  color: var(--mw-text-secondary);
   font-size: 14px;
 }
 .layout__main {
-  max-width: 1080px;
+  max-width: 1140px;
   margin: 0 auto;
   width: 100%;
-  padding: 24px 16px;
+  padding: 20px 16px 32px;
 }
 .layout__crumb {
   font-size: 12px;
-  color: #9ca3af;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 .layout__footer {
   text-align: center;
-  color: #9ca3af;
+  color: var(--mw-text-muted);
   font-size: 12px;
   background: transparent;
 }

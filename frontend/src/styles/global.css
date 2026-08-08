@@ -1,3 +1,49 @@
+/**
+ * 全局设计令牌 + Element Plus 主题覆盖。
+ * 主题：暖橙 #d97706 + 奶白 #fdf6ec + 主文字 #1f2937
+ */
+:root {
+  /* ===== 品牌色 ===== */
+  --mw-primary: #d97706;
+  --mw-primary-dark: #b45309;
+  --mw-cream: #fdf6ec;
+
+  /* ===== 中性色 ===== */
+  --mw-bg: #faf7f2;
+  --mw-surface: #ffffff;
+  --mw-border: #ece4d9;
+  --mw-border-light: #f4efe7;
+  --mw-text: #1f2937;
+  --mw-text-secondary: #6b7280;
+  --mw-text-muted: #9ca3af;
+
+  /* ===== 形状 ===== */
+  --mw-radius: 10px;
+  --mw-radius-sm: 6px;
+  --mw-shadow: 0 1px 3px rgba(120, 80, 20, 0.06);
+  --mw-shadow-hover: 0 6px 16px rgba(217, 119, 6, 0.12);
+
+  /* ===== Element Plus 主题覆盖 =====
+     必须给全 light-1..9 与 dark-2，否则 hover / plain / disabled
+     等派生态仍会用默认蓝。数值为 primary 与白色按 N*10% 混合。 */
+  --el-color-primary: #d97706;
+  --el-color-primary-light-1: #dd851f;
+  --el-color-primary-light-2: #e19238;
+  --el-color-primary-light-3: #e4a051;
+  --el-color-primary-light-4: #e8ad6a;
+  --el-color-primary-light-5: #ecbb83;
+  --el-color-primary-light-6: #f0c99b;
+  --el-color-primary-light-7: #f3d6b4;
+  --el-color-primary-light-8: #f7e4cd;
+  --el-color-primary-light-9: #fbf1e6;
+  --el-color-primary-dark-2: #ae5f05;
+
+  --el-border-radius-base: 8px;
+  --el-menu-hover-bg-color: var(--mw-cream);
+  --el-text-color-primary: var(--mw-text);
+  --el-text-color-regular: var(--mw-text-secondary);
+}
+
 html,
 body,
 #app {
@@ -5,10 +51,18 @@ body,
   margin: 0;
   padding: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: #f7f8fa;
-  color: #1f2329;
+  background: var(--mw-bg);
+  color: var(--mw-text);
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* 共享卡片容器：列表页 / 详情页复用 */
+.mw-card {
+  background: var(--mw-surface);
+  border: 1px solid var(--mw-border);
+  border-radius: var(--mw-radius);
+  box-shadow: var(--mw-shadow);
 }

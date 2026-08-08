@@ -6,10 +6,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Document, View, EditPen, MagicStick, Share } from '@element-plus/icons-vue'
+import { Plus, View, EditPen, MagicStick } from '@element-plus/icons-vue'
 import { listDrafts } from '@/api/draft'
 import { listSubjects } from '@/api/subject'
 import type { NarrativeDraftVO, SubjectVO } from '@/types/api'
+import { formatDateTime } from '@/utils/format'
 import TemplatePicker from './TemplatePicker.vue'
 
 const route = useRoute()
@@ -120,28 +121,11 @@ function onGenerateClick(d: NarrativeDraftVO, e: Event) {
   onGenerate(d)
 }
 
-function formatTime(s?: string) {
-  if (!s) return ''
-  const d = new Date(s)
-  if (isNaN(d.getTime())) return s
-  return d.toLocaleString('zh-CN', { hour12: false })
-}
-
 onMounted(() => { loadSubjects(); load() })
 </script>
 
 <template>
   <div class="dl" v-loading="loading">
-    <header class="dl__head">
-      <el-button text @click="router.push(`/projects/${projectId}`)">← 返回项目详情</el-button>
-      <div class="dl__title">
-        <h2>成稿</h2>
-        <p class="muted">基于采访消息、素材和备注，由 AI 生成结构化叙事</p>
-      </div>
-      <el-button :icon="Share" plain @click="router.push(`/projects/${projectId}/shares`)">分享管理</el-button>
-      <el-button type="primary" :icon="Plus" @click="showPicker = true">新建成稿</el-button>
-    </header>
-
     <div class="dl__bar">
       <el-radio-group v-model="filterScope" size="default" @change="load">
         <el-radio-button value="">全部范围</el-radio-button>
@@ -155,9 +139,10 @@ onMounted(() => { loadSubjects(); load() })
         <el-radio-button value="published">已发布</el-radio-button>
       </el-radio-group>
       <span class="dl__count">共 {{ drafts.length }} 篇</span>
+      <el-button type="primary" :icon="Plus" @click="showPicker = true">新建成稿</el-button>
     </div>
 
-    <el-empty v-if="!loading && drafts.length === 0" description="还没有成稿，点击右上角「新建成稿」开始" />
+    <el-empty v-if="!loading && drafts.length === 0" description="还没有成稿，点击「新建成稿」开始" />
 
     <div v-else class="dl__grid">
       <article
@@ -179,7 +164,7 @@ onMounted(() => { loadSubjects(); load() })
         </div>
         <div class="dl__cardMeta dl__cardMeta--sub">
           <span>{{ d.sections.length }} 章</span>
-          <span v-if="d.updatedAt">更新于 {{ formatTime(d.updatedAt) }}</span>
+          <span v-if="d.updatedAt">更新于 {{ formatDateTime(d.updatedAt) }}</span>
         </div>
         <div class="dl__cardFoot">
           <el-button
@@ -221,47 +206,41 @@ onMounted(() => { loadSubjects(); load() })
 </template>
 
 <style scoped>
-.dl { max-width: 1100px; margin: 0 auto; }
-.dl__head {
-  display: flex; align-items: center; gap: 16px;
-  padding-bottom: 12px; border-bottom: 1px solid #e5e7eb; margin-bottom: 16px;
-}
-.dl__title { flex: 1; }
-.dl__title h2 { margin: 0; }
-.muted { color: #6b7280; font-size: 13px; margin: 4px 0 0; }
+.dl { width: 100%; }
 .dl__bar {
   display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-  padding: 12px; background: #fff; border-radius: 8px;
-  border: 1px solid #e5e7eb; margin-bottom: 16px;
+  padding: 12px; background: var(--mw-surface); border-radius: var(--mw-radius);
+  border: 1px solid var(--mw-border); margin-bottom: 16px;
 }
-.dl__count { color: #9ca3af; font-size: 12px; margin-left: auto; }
+.dl__count { color: var(--mw-text-muted); font-size: 12px; margin-left: auto; }
 .dl__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 16px;
 }
 .dl__card {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+  background: var(--mw-surface); border: 1px solid var(--mw-border);
+  border-radius: var(--mw-radius);
   padding: 16px; cursor: pointer; transition: all 0.15s;
   display: flex; flex-direction: column; gap: 8px;
 }
 .dl__card:hover {
-  border-color: #2563eb;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
-  transform: translateY(-1px);
+  border-color: var(--mw-primary);
+  box-shadow: var(--mw-shadow-hover);
+  transform: translateY(-2px);
 }
 .dl__cardHead { display: flex; align-items: center; gap: 8px; }
 .dl__emoji { font-size: 22px; }
 .dl__cardTitle {
-  margin: 0; font-size: 16px; color: #1f2937; line-height: 1.4;
+  margin: 0; font-size: 16px; color: var(--mw-text); line-height: 1.4;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.dl__cardMeta { color: #4b5563; font-size: 13px; }
-.dl__cardMeta--sub { color: #9ca3af; font-size: 12px; }
+.dl__cardMeta { color: var(--mw-text-secondary); font-size: 13px; }
+.dl__cardMeta--sub { color: var(--mw-text-muted); font-size: 12px; }
 .dl__tplName { font-weight: 500; }
-.dl__sep { margin: 0 4px; color: #d1d5db; }
+.dl__sep { margin: 0 4px; color: var(--mw-border); }
 .dl__cardFoot {
   display: flex; gap: 8px; margin-top: 4px;
-  padding-top: 8px; border-top: 1px dashed #e5e7eb;
+  padding-top: 8px; border-top: 1px dashed var(--mw-border);
 }
 </style>
