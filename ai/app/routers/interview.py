@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.services.llm import LlmError, stream_chat_with_retry
+from app.services.llm import LlmError, stream_chat_with_retry, stream_chat_with_think
 from app.services.prompts import ensure_system_message
 
 log = logging.getLogger(__name__)
@@ -24,9 +24,30 @@ class InterviewRequest(BaseModel):
     messages: list[InterviewMessage]
 
 
+def _safe(text: str) -> str:
+    """SSE data 行内容兜底：去掉 \\r、把 \\n 换成空格，防止被解析成新 frame。"""
+    return text.replace("\r", "").replace("\n", " ")
+
+
 @router.post("/stream")
 async def stream(_req: InterviewRequest) -> StreamingResponse:
-    """流式调 LLM，输出纯文本 token（SSE 格式：data: <token>\\n\\n）。"""
+    """流式调 LLM，输出 SSE 多事件流。
+
+    协议：
+      event: token
+      data: <text token>
+
+      event: thinking
+      data: <think token>
+
+      event: error
+      data: <msg>
+
+      event: done
+      data:
+
+    Spring Boot 端用 ServerSentEvent 解析后按 event 名转发给前端 SSE。
+    """
 
     msgs = ensure_system_message([m.model_dump() for m in _req.messages])
     log.info(
@@ -36,22 +57,24 @@ async def stream(_req: InterviewRequest) -> StreamingResponse:
 
     async def event_source() -> AsyncIterator[bytes]:
         try:
-            async for token in stream_chat_with_retry(msgs):
-                # 直接吐 token 原文。SSE 协议只要求 data 内容以 \n 结尾、不含 \r：
-                # 中文字符天然没有 \n；极端场景（如上游意外带换行）做兜底替换，
+            async for kind, token in stream_chat_with_think(msgs):
+                # 直接吐 token 原文。SSE 协议只要求 data 内容以 \\n 结尾、不含 \\r：
+                # 中文字符天然没有 \\n；极端场景（如上游意外带换行）做兜底替换，
                 # 防止被解析成新的 SSE frame。
                 # 不要用 json.dumps() 包成 "..."：那会让 token 自带外层引号，
                 # 下游 WebClient 把 data 字段原样吐回 Flux<String> 时会把引号
                 # 一起 append 到消息正文，造成 "您""2004年""在""普"... 这种污染。
-                safe = token.replace("\r", "").replace("\n", " ")
-                yield f"data: {safe}\n\n".encode("utf-8")
+                safe_token = _safe(token)
+                if kind == "think":
+                    yield f"event: thinking\ndata: {safe_token}\n\n".encode("utf-8")
+                else:
+                    yield f"event: token\ndata: {safe_token}\n\n".encode("utf-8")
         except LlmError as e:
             log.exception("LLM error")
-            # 错误也用纯文本格式，保持和成功流一致；下游用前缀识别错误。
-            err_msg = str(e).replace("\r", "").replace("\n", " ")
-            yield f"data: [ERROR] {err_msg}\n\n".encode("utf-8")
-        # SSE 标准结束标记。Java 端 (AiClient.streamInterview) 会通过 .filter 丢弃它。
-        yield b"data: [DONE]\n\n"
+            err_msg = _safe(str(e))
+            yield f"event: error\ndata: {err_msg}\n\n".encode("utf-8")
+        # 标准结束事件：Spring 端看到 event:done 就关流。
+        yield b"event: done\ndata:\n\n"
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
 
