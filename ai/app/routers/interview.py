@@ -1,5 +1,4 @@
 """AI 采访对话路由（M2 真实流式）。"""
-import json
 import logging
 from typing import AsyncIterator
 
@@ -38,13 +37,20 @@ async def stream(_req: InterviewRequest) -> StreamingResponse:
     async def event_source() -> AsyncIterator[bytes]:
         try:
             async for token in stream_chat_with_retry(msgs):
-                # 用 JSON 序列化以避免换行/引号等字符破坏 SSE 协议
-                yield f"data: {json.dumps(token, ensure_ascii=False)}\n\n".encode("utf-8")
+                # 直接吐 token 原文。SSE 协议只要求 data 内容以 \n 结尾、不含 \r：
+                # 中文字符天然没有 \n；极端场景（如上游意外带换行）做兜底替换，
+                # 防止被解析成新的 SSE frame。
+                # 不要用 json.dumps() 包成 "..."：那会让 token 自带外层引号，
+                # 下游 WebClient 把 data 字段原样吐回 Flux<String> 时会把引号
+                # 一起 append 到消息正文，造成 "您""2004年""在""普"... 这种污染。
+                safe = token.replace("\r", "").replace("\n", " ")
+                yield f"data: {safe}\n\n".encode("utf-8")
         except LlmError as e:
             log.exception("LLM error")
-            err = json.dumps({"error": str(e)}, ensure_ascii=False)
-            yield f"data: {err}\n\n".encode("utf-8")
-        # 结束标记
+            # 错误也用纯文本格式，保持和成功流一致；下游用前缀识别错误。
+            err_msg = str(e).replace("\r", "").replace("\n", " ")
+            yield f"data: [ERROR] {err_msg}\n\n".encode("utf-8")
+        # SSE 标准结束标记。Java 端 (AiClient.streamInterview) 会通过 .filter 丢弃它。
         yield b"data: [DONE]\n\n"
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
