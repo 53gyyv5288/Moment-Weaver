@@ -48,3 +48,13 @@ export function getProject(id: string | number) {
 export function deleteProject(id: string | number) {
   return backend.delete<ApiResult<null>>(`/v1/projects/${id}`)
 }
+
+/** 修改项目名称 / 描述（PUT 部分更新，name/description 至少传一项） */
+export interface ProjectUpdateRequest {
+  name?: string
+  description?: string
+}
+
+export function updateProject(id: string | number, data: ProjectUpdateRequest) {
+  return backend.put<ApiResult<ProjectVO>>(`/v1/projects/${id}`, data)
+}

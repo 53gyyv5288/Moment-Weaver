@@ -1,6 +1,7 @@
 package com.momentweaver.account.controller;
 
 import com.momentweaver.account.dto.ProjectCreateRequest;
+import com.momentweaver.account.dto.ProjectUpdateRequest;
 import com.momentweaver.account.dto.ProjectVO;
 import com.momentweaver.account.security.CurrentUser;
 import com.momentweaver.account.service.ProjectService;
@@ -45,5 +46,11 @@ public class ProjectController {
     public Result<Void> delete(@PathVariable Long id) {
         projectService.delete(CurrentUser.requireId(), id);
         return Result.ok();
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "修改项目名称 / 描述（工作区成员）")
+    public Result<ProjectVO> update(@PathVariable Long id, @Valid @RequestBody ProjectUpdateRequest req) {
+        return Result.ok(projectService.update(CurrentUser.requireId(), id, req));
     }
 }

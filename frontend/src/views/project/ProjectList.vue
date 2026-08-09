@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import type { FormInstance } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, View } from '@element-plus/icons-vue'
-import { listProjects, deleteProject } from '@/api/project'
+import { Plus, Delete, View, Edit } from '@element-plus/icons-vue'
+import { listProjects, deleteProject, updateProject } from '@/api/project'
 import type { ProjectVO } from '@/api/project'
 import { formatDateTime } from '@/utils/format'
 
@@ -42,6 +43,58 @@ async function handleDelete(p: ProjectVO) {
 
 function typeLabel(t: string) {
   return t === 'family' ? '家族' : t === 'personal' ? '个人' : t
+}
+
+// ---- 编辑项目 ----
+const editingProject = ref<ProjectVO | null>(null)
+const editForm = ref({ name: '', description: '' })
+const editRules = {
+  name: [
+    { required: true, message: '请输入项目名', trigger: 'blur' },
+    { min: 1, max: 128, message: '1-128 字', trigger: 'blur' },
+  ],
+  description: [{ max: 512, message: '最多 512 字', trigger: 'blur' }],
+}
+const editFormRef = ref<FormInstance>()
+const showEdit = ref(false)
+const savingEdit = ref(false)
+
+function onOpenEdit(p: ProjectVO) {
+  editingProject.value = p
+  editForm.value = { name: p.name, description: p.description ?? '' }
+  showEdit.value = true
+}
+
+async function onSaveEdit() {
+  if (!editingProject.value || !editFormRef.value) return
+  const valid = await editFormRef.value.validate().catch(() => false)
+  if (!valid) return
+  const newName = editForm.value.name.trim()
+  const newDesc = editForm.value.description.trim()
+  const origName = editingProject.value.name
+  const origDesc = editingProject.value.description ?? ''
+  if (newName === origName && newDesc === origDesc) {
+    ElMessage.warning('没有修改任何字段')
+    return
+  }
+  // 后端 @AssertTrue 要求至少一个字段改变；同值字段不传
+  const data: { name?: string; description?: string } = {}
+  if (newName !== origName) data.name = newName
+  if (newDesc !== origDesc) data.description = newDesc || ''
+  savingEdit.value = true
+  try {
+    const { data: resp } = await updateProject(editingProject.value.id, data)
+    if (resp && resp.code === 0) {
+      ElMessage.success('已保存')
+      showEdit.value = false
+      editingProject.value = null
+      await load()
+    } else {
+      ElMessage.error(resp?.message || '保存失败')
+    }
+  } finally {
+    savingEdit.value = false
+  }
 }
 
 onMounted(load)
@@ -100,6 +153,9 @@ onMounted(load)
             <el-button size="small" text type="primary" :icon="View" @click.stop="router.push(`/projects/${p.id}`)">
               进入
             </el-button>
+            <el-button size="small" text type="primary" :icon="Edit" @click.stop="onOpenEdit(p)">
+              编辑
+            </el-button>
             <el-button size="small" text type="danger" :icon="Delete" @click.stop="handleDelete(p)">
               删除
             </el-button>
@@ -107,6 +163,29 @@ onMounted(load)
         </article>
       </div>
     </template>
+
+    <!-- 编辑项目对话框 -->
+    <el-dialog v-model="showEdit" title="编辑项目" width="500px">
+      <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-width="100px">
+        <el-form-item label="项目名" prop="name">
+          <el-input v-model="editForm.name" placeholder="1-128 字" maxlength="128" show-word-limit />
+        </el-form-item>
+        <el-form-item label="描述" prop="description">
+          <el-input
+            v-model="editForm.description"
+            type="textarea"
+            :rows="3"
+            placeholder="一句话介绍这个项目（留空可清空）"
+            maxlength="512"
+            show-word-limit
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEdit = false">取消</el-button>
+        <el-button type="primary" :loading="savingEdit" @click="onSaveEdit">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

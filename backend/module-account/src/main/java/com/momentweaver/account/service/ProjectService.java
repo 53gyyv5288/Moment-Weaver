@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.momentweaver.account.dto.ProjectCreateRequest;
+import com.momentweaver.account.dto.ProjectUpdateRequest;
 import com.momentweaver.account.dto.ProjectVO;
 import com.momentweaver.account.entity.Project;
 import com.momentweaver.account.entity.Workspace;
@@ -73,6 +74,28 @@ public class ProjectService {
             throw new BusinessException(ResultCode.FORBIDDEN, "仅 Owner 可删除项目");
         }
         projectMapper.deleteById(projectId);
+    }
+
+    /**
+     * 局部更新项目。只有请求里出现的字段会被改动；description 显式传 "" 视为清空。
+     * 权限：工作区成员即可（与 SubjectService.update 对齐）。
+     */
+    @Transactional
+    public ProjectVO update(Long userId, Long projectId, ProjectUpdateRequest req) {
+        Project p = projectMapper.selectById(projectId);
+        if (p == null) throw new BusinessException(ResultCode.PROJECT_NOT_FOUND);
+        ensureMember(p.getWorkspaceId(), userId);
+
+        if (req.getName() != null) {
+            p.setName(req.getName().trim());
+        }
+        if (req.getDescription() != null) {
+            // 显式传 "" 清空；不传保持原值
+            p.setDescription(req.getDescription().isEmpty() ? null : req.getDescription().trim());
+        }
+        p.setUpdatedAt(LocalDateTime.now());
+        projectMapper.updateById(p);
+        return toVO(p);
     }
 
     // ---- helpers ----
