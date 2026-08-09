@@ -29,7 +29,6 @@ import reactor.core.publisher.Flux;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 @Service
@@ -102,10 +101,13 @@ public class InterviewService {
     }
 
     /**
-     * 流式发送用户消息。返回 Flux<String>（AI 输出的 token 片段）。
-     * 副作用：先追加 user 消息，等流结束再追加 assistant 消息。
+     * 流式发送用户消息。返回 Flux<StreamChunk>：
+     *   - kind="text"   —— AI 可见正文片段
+     *   - kind="think"  —— 推理模型思考链片段（持久化到 Mongo，不进时间线预览）
+     *
+     * 副作用：先追加 user 消息，等流结束再追加 assistant 消息（content + thinking）。
      */
-    public Flux<String> streamMessage(Long userId, String sessionId, String userContent) {
+    public Flux<AiClient.StreamChunk> streamMessage(Long userId, String sessionId, String userContent) {
         InterviewSession sess = mustSession(sessionId);
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
         ensureMember(p.getWorkspaceId(), userId);
@@ -128,32 +130,40 @@ public class InterviewService {
             aiMsgs.add(new AiClient.AiMessage(m.getRole(), m.getContent()));
         }
 
-        // 3) 流式调 AI，累积输出
+        // 3) 流式调 AI，分别累计可见文本与思考链
         String subjectHint = sess.getSubjectDisplayName() + " | " + p.getName();
-        StringBuilder acc = new StringBuilder();
-        AtomicReference<InterviewMessage> assistantRef = new AtomicReference<>();
+        StringBuilder accText = new StringBuilder();
+        StringBuilder accThink = new StringBuilder();
 
         return aiClient.streamInterview(sessionId, subjectHint, aiMsgs)
-            .doOnNext(token -> {
-                acc.append(token);
-                // 增量更新 Mongo 中的最后一条 assistant 消息（可选优化）
+            .doOnNext(chunk -> {
+                if (chunk.isText()) {
+                    accText.append(chunk.content());
+                } else if (chunk.isThink()) {
+                    accThink.append(chunk.content());
+                }
             })
             .doOnComplete(() -> {
-                String full = acc.toString();
+                String full = accText.toString();
+                String thinking = accThink.toString();
                 if (!full.isEmpty()) {
                     InterviewMessage assistant = InterviewMessage.builder()
                         .role("assistant")
                         .source("ai_generated")
                         .content(full)
+                        // 仅在真有思考链内容时落库，避免给老格式文档写一堆空串
+                        .thinking(thinking.isEmpty() ? null : thinking)
                         .createdAt(LocalDateTime.now())
                         .build();
                     sess.getMessages().add(assistant);
                 }
                 sess.setLastMessageAt(LocalDateTime.now());
                 sessionRepo.save(sess);
-                log.info("Interview session {} assistant message saved ({} chars)", sessionId, acc.length());
+                log.info("Interview session {} assistant message saved (text={} chars, thinking={} chars)",
+                    sessionId, accText.length(), accThink.length());
 
                 // 触发时间线事件（M3 解耦：module-timeline 监听并写库）
+                // 注意：思考链不进时间线预览，避免污染 Timeline 列表。
                 if (!full.isEmpty()) {
                     String preview = full.length() > 80 ? full.substring(0, 80) + "…" : full;
                     eventPublisher.publishEvent(new TimelineEventRequest(

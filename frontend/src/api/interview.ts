@@ -47,6 +47,8 @@ export function closeInterviewSession(id: string) {
 export interface StreamHandlers {
   onStart?: () => void
   onToken?: (token: string) => void
+  /** 思考链片段（推理模型产生，event: thinking） */
+  onThinking?: (token: string) => void
   onError?: (message: string) => void
   onDone?: () => void
 }
@@ -109,6 +111,9 @@ export async function streamInterviewMessage(
           case 'token':
             // Spring Boot SseEmitter 的 data 是字符串内容，直接吐给 onToken
             handlers.onToken?.(data)
+            break
+          case 'thinking':
+            handlers.onThinking?.(data)
             break
           case 'error':
             handlers.onError?.(data)

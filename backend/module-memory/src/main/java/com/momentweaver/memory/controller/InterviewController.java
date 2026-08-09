@@ -2,6 +2,7 @@ package com.momentweaver.memory.controller;
 
 import com.momentweaver.account.security.CurrentUser;
 import com.momentweaver.common.Result;
+import com.momentweaver.memory.client.AiClient;
 import com.momentweaver.memory.dto.InterviewSendRequest;
 import com.momentweaver.memory.dto.InterviewSessionVO;
 import com.momentweaver.memory.dto.InterviewStartRequest;
@@ -67,11 +68,11 @@ public class InterviewController {
     }
 
     @PostMapping(value = "/sessions/{id}/message", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "发送一条用户消息；返回 SSE 流，token 级别推送 AI 回复")
+    @Operation(summary = "发送一条用户消息；返回 SSE 流，token 级别推送 AI 回复（含思考链）")
     public SseEmitter send(@PathVariable String id, @Valid @RequestBody InterviewSendRequest req) {
         Long userId = CurrentUser.requireId();
         SseEmitter emitter = new SseEmitter(180_000L); // 3 分钟超时
-        Flux<String> flux = interviewService.streamMessage(userId, id, req.getContent());
+        Flux<AiClient.StreamChunk> flux = interviewService.streamMessage(userId, id, req.getContent());
 
         // 发送首包，立刻打开客户端通道
         try {
@@ -88,9 +89,10 @@ public class InterviewController {
         }, 15, 15, TimeUnit.SECONDS);
 
         flux.subscribe(
-            token -> {
+            chunk -> {
                 try {
-                    emitter.send(SseEmitter.event().name("token").data(token));
+                    String eventName = chunk.isThink() ? "thinking" : "token";
+                    emitter.send(SseEmitter.event().name(eventName).data(chunk.content()));
                 } catch (IOException e) {
                     emitter.completeWithError(e);
                 }

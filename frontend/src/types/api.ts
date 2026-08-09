@@ -129,6 +129,8 @@ export interface CreateAuthorizationReq {
 export interface InterviewMessageVO {
   role: 'system' | 'user' | 'assistant' | string
   content: string
+  /** 思考链：推理模型 <think>...</think> 内容；非推理模型 / 老文档为 undefined */
+  thinking?: string
   source?: 'human' | 'ai_generated' | string
   createdAt?: string
 }

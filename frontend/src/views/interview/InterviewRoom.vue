@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 采访对话房间。M2 SSE 流式输出 + M3 摘要按钮。
+ * 采访对话房间。M2 SSE 流式输出 + M3 摘要按钮 + M5+ 思考链面板。
  */
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -25,6 +25,11 @@ const closing = ref(false)
 const regenerating = ref(false)
 const scroller = ref<HTMLElement | null>(null)
 
+// 思考链面板：实时累计当前流的 thinking，并控制哪些 idx 处于展开状态。
+// 流进行中：自动展开当前消息的面板；流结束：自动折叠。
+const liveThinking = ref('')
+const activeCollapse = ref<string[]>([])
+
 const visibleMessages = computed(() =>
   (session.value?.messages || []).filter(m => m.role !== 'system'),
 )
@@ -46,6 +51,11 @@ function scrollToBottom() {
   scroller.value.scrollTop = scroller.value.scrollHeight
 }
 
+function panelKey(idx: number): string {
+  // 每条 AI 消息面板的稳定 key（用 idx 即可：本组件内消息列表顺序稳定）
+  return `think-${idx}`
+}
+
 async function onSend() {
   if (!input.value.trim() || streaming.value) return
   const text = input.value.trim()
@@ -60,6 +70,11 @@ async function onSend() {
   await nextTick()
   scrollToBottom()
 
+  // 2) 流式开始：记录当前 assistant 在 visibleMessages 里的位置
+  const assistantIdx = visibleMessages.value.length - 1
+  const panelId = panelKey(assistantIdx)
+  liveThinking.value = ''
+
   streaming.value = true
   try {
     await streamInterviewMessage(sessionId.value, text, {
@@ -70,15 +85,32 @@ async function onSend() {
         session.value!.messages = [...session.value!.messages]
         nextTick(scrollToBottom)
       },
+      onThinking: (token) => {
+        liveThinking.value += token
+        // 流进行中：自动展开思考面板，让用户看到 AI 正在想什么
+        if (!activeCollapse.value.includes(panelId)) {
+          activeCollapse.value = [...activeCollapse.value, panelId]
+        }
+        nextTick(scrollToBottom)
+      },
       onError: (msg) => {
         ElMessage.error('AI 错误：' + msg)
       },
       onDone: () => {
-        // 流结束，server 端已把 assistant 完整内容持久化到 Mongo
+        // 流结束：把 live thinking 落到 assistant 消息上，再收起面板
+        if (liveThinking.value) {
+          assistantMsg.thinking = liveThinking.value
+          session.value!.messages = [...session.value!.messages]
+        }
+        liveThinking.value = ''
+        activeCollapse.value = activeCollapse.value.filter(k => k !== panelId)
       },
     })
   } catch (e: any) {
     ElMessage.error(e?.message || '发送失败')
+    // 异常路径：同样清理面板状态
+    liveThinking.value = ''
+    activeCollapse.value = activeCollapse.value.filter(k => k !== panelId)
   } finally {
     streaming.value = false
   }
@@ -167,6 +199,32 @@ onMounted(load)
         :class="`ir__msg--${m.role}`"
       >
         <div class="ir__bubble">
+          <!-- 思考链面板：仅 assistant 消息 + 有内容时渲染 -->
+          <el-collapse
+            v-if="m.role === 'assistant' && (m.thinking || (streaming && idx === visibleMessages.length - 1 && liveThinking))"
+            v-model="activeCollapse"
+            :key="`${idx}-${streaming}`"
+            class="ir__think"
+          >
+            <el-collapse-item :name="panelKey(idx)">
+              <template #title>
+                <span class="ir__think-title">
+                  <span class="ir__think-icon">💭</span>
+                  <span class="ir__think-label">AI 思考</span>
+                  <span v-if="streaming && idx === visibleMessages.length - 1" class="ir__think-status">
+                    正在思考…
+                  </span>
+                  <span v-else class="ir__think-count">
+                    {{ (m.thinking || '').length }} 字
+                  </span>
+                </span>
+              </template>
+              <div class="ir__think-body">
+                {{ idx === visibleMessages.length - 1 && streaming ? liveThinking : m.thinking }}
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+
           <div class="ir__meta">
             <span class="ir__role">{{ m.role === 'user' ? '采访者' : 'AI 采访官' }}</span>
             <el-tag v-if="m.source === 'ai_generated'" size="small" type="warning" effect="plain">AI 生成</el-tag>
@@ -254,4 +312,56 @@ onMounted(load)
   border-top: 1px solid #e5e7eb;
 }
 .ir__foot :deep(.el-textarea) { flex: 1; }
+
+/* 思考链面板：轻灰背景 + 斜体 + 等宽观感 */
+.ir__think {
+  margin-bottom: 8px;
+  border: 1px solid var(--mw-border, #e5e7eb);
+  border-radius: 6px;
+  background: #f9fafb;
+}
+.ir__think :deep(.el-collapse-item__header) {
+  border-bottom: none;
+  padding-left: 10px;
+  min-height: 32px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.ir__think :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+}
+.ir__think :deep(.el-collapse-item__content) {
+  padding: 0 10px 10px 10px;
+}
+.ir__think-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ir__think-icon { font-size: 13px; }
+.ir__think-label { font-weight: 500; }
+.ir__think-status {
+  color: var(--mw-primary, #d97706);
+  font-size: 11px;
+}
+.ir__think-count {
+  color: #9ca3af;
+  font-size: 11px;
+  margin-left: 4px;
+}
+.ir__think-body {
+  font-style: italic;
+  color: #4b5563;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 13px;
+  border-left: 3px solid #d1d5db;
+  padding-left: 8px;
+  background: #f3f4f6;
+  border-radius: 0 4px 4px 0;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
 </style>

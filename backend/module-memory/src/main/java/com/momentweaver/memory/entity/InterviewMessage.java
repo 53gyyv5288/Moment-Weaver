@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 public class InterviewMessage {
     private String role;        // system | user | assistant
     private String content;
+    private String thinking;    // 思考链（M5+ 暴露给用户；推理模型 <think>...</think> 内容；非推理模型为 null）
     private String source;      // human | ai_generated
     private Integer tokenCount; // 估算（前端用不到，后端审计用）
     private LocalDateTime createdAt;
