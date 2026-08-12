@@ -28,6 +28,10 @@
         </dependency>
         <dependency>
             <groupId>com.momentweaver</groupId>
+            <artifactId>module-rag</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
             <artifactId>module-compliance</artifactId>
         </dependency>
         <dependency>

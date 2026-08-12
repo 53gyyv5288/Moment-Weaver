@@ -28,6 +28,11 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
     default-property-inclusion: non_null
+    # 注意：这里**不能**设 property-naming-strategy: SNAKE_CASE。
+    # 那会把所有对前端的响应字段也改成下划线（accessToken → access_token），
+    # 导致前端读不到 token 而全线 401。
+    # 与 FastAPI (Python) 的字段命名对齐只需要 RAG 的几个 DTO，
+    # 已在各 DTO 上用 @JsonNaming(SnakeCaseStrategy) 单独标注。
     # LocalDateTime / LocalDate 序列化为 ISO-8601 字符串（默认是 [yyyy,mm,dd,...] 数组，
     # Pydantic / FastAPI 会 422）
     serialization:
@@ -104,6 +109,11 @@ moment:
       heading-font-size: 16.0
       cache-ttl-seconds: 3600
       oss-key-prefix: pdfs/
+  security:
+    # 内部服务共享密钥：AI 服务 (FastAPI) 调 Spring 端 /api/v1/memory/subjects/*/authorizations/check
+    # 时通过 X-Internal-Secret 头传；不匹配则 401。
+    # 生产必须用环境变量覆盖（dev 默认值仅本地开发用）。
+    internal-secret: ${MOMENT_INTERNAL_SECRET:moment-internal-dev-secret-change-me}
 
 # 阿里云 OSS（M3 启用）
 aliyun:

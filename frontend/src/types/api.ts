@@ -133,6 +133,18 @@ export interface InterviewMessageVO {
   thinking?: string
   source?: 'human' | 'ai_generated' | string
   createdAt?: string
+  /**
+   * RAG 检索到的跨 session 历史片段（最多 5 条；中途推或下轮前置推）。
+   * 仅 assistant 消息可能携带；老文档没有。
+   */
+  evidence?: InterviewEvidenceItem[]
+}
+
+/** RAG 检索片段（前后端 snake_case 一致） */
+export interface InterviewEvidenceItem {
+  sessionId: string
+  text: string
+  score: number
 }
 
 export interface InterviewSessionVO {

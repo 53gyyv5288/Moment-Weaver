@@ -12,6 +12,8 @@ import com.momentweaver.common.event.TimelineEventTypes;
 import com.momentweaver.compliance.config.OssProperties;
 import com.momentweaver.memory.entity.Subject;
 import com.momentweaver.memory.mapper.SubjectMapper;
+import com.momentweaver.rag.event.AssetUpsertedEvent;
+import com.momentweaver.rag.dto.AssetSnapshot;
 import com.momentweaver.timeline.config.LocalStorageProperties;
 import com.momentweaver.timeline.dto.AssetCreateRequest;
 import com.momentweaver.timeline.dto.AssetVO;
@@ -92,6 +94,12 @@ public class AssetService {
         assetMapper.insert(a);
         log.info("Asset registered: id={}, projectId={}, key={}", a.getId(), projectId, req.getOssKey());
         recordTimeline(a);
+        // RAG ingest（AFTER_COMMIT 监听器异步写入 Milvus）
+        try {
+            eventPublisher.publishEvent(new AssetUpsertedEvent(this, toSnapshot(a), java.util.List.of()));
+        } catch (Exception ex) {
+            log.warn("publish AssetUpsertedEvent failed: {}", ex.toString());
+        }
         return toVO(a);
     }
 
@@ -170,6 +178,12 @@ public class AssetService {
         assetMapper.insert(a);
         log.info("Asset multipart uploaded: id={}, projectId={}, key={}, size={}", a.getId(), projectId, relativeKey, file.getSize());
         recordTimeline(a);
+        // RAG ingest（AFTER_COMMIT 监听器异步写入 Milvus）
+        try {
+            eventPublisher.publishEvent(new AssetUpsertedEvent(this, toSnapshot(a), java.util.List.of()));
+        } catch (Exception ex) {
+            log.warn("publish AssetUpsertedEvent failed: {}", ex.toString());
+        }
         return toVO(a);
     }
 
@@ -282,6 +296,19 @@ public class AssetService {
     }
 
     // ============ helpers ============
+
+    /** Asset → AssetSnapshot：用于跨模块事件传递，避免 module-rag 反向依赖 module-timeline。 */
+    private AssetSnapshot toSnapshot(Asset a) {
+        return new AssetSnapshot(
+            a.getId(),
+            a.getSubjectId(),
+            a.getKind(),
+            a.getCaption(),
+            a.getOriginalName(),
+            a.getOssKey(),
+            a.getTakenAt()
+        );
+    }
 
     private AssetVO toVO(Asset a) {
         AssetVO vo = new AssetVO();

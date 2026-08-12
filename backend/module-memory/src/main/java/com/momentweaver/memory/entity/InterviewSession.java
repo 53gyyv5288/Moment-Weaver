@@ -1,5 +1,6 @@
 package com.momentweaver.memory.entity;
 
+import com.momentweaver.common.entity.InterviewMessage;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;

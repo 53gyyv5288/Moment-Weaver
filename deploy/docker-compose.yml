@@ -1,7 +1,6 @@
 # ============================================================
-# Moment Weaver · 生产部署用 docker-compose
-# 本期不用于本地开发，仅 M5 部署到阿里云 ECS 时使用
-# ============================================================
+# Moment Weaver 路 鐢熶骇閮ㄧ讲鐢?docker-compose
+# 鏈湡涓嶇敤浜庢湰鍦板紑鍙戯紝浠?M5 閮ㄧ讲鍒伴樋閲屼簯 ECS 鏃朵娇鐢?# ============================================================
 version: "3.8"
 
 services:
@@ -29,22 +28,38 @@ services:
       MONGO_URI: mongodb://mongo:27017/moment_weaver
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      # RAG 妯″潡锛氭湰鍦板紑鍙戣繛瀹夸富鏈虹殑 Milvus / ai-reranker锛堝紑鍙戠敤 host 缃戠粶锛涚敓浜ф敼瀹瑰櫒缃戠粶锛?
+      MOMENT_RAG_AI_BASE_URL: http://ai:8000
+      # 内部服务共享密钥：AI 服务 (FastAPI) 调 Spring 端 /api/v1/memory/subjects/*/authorizations/check
+      # 时通过 X-Internal-Secret 头传；不匹配则 401。
+      # 默认值与 ai 服务 RAG_INTERNAL_SECRET 保持一致；生产用 .env 覆盖。
+      MOMENT_INTERNAL_SECRET: ${MOMENT_INTERNAL_SECRET:-moment-internal-dev-secret-change-me}
     depends_on:
       - mysql
       - mongo
       - redis
+      - milvus
+      - ai-reranker
     restart: always
 
   ai:
     build: ../ai
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
       MOMENT_BACKEND_URL: http://backend:8080
       MONGO_URI: mongodb://mongo:27017
       REDIS_URL: redis://redis:6379/0
+      MILVUS_URI: http://milvus:19530
+      MILVUS_DB: ${MILVUS_DB:-default}
+      RERANKER_URL: http://ai-reranker:9001
+      # 内部服务共享密钥：与 Spring 端 MOMENT_INTERNAL_SECRET 一致
+      RAG_INTERNAL_SECRET: ${MOMENT_INTERNAL_SECRET:-moment-internal-dev-secret-change-me}
     depends_on:
       - mongo
       - redis
+      - milvus
+      - ai-reranker
     restart: always
 
   mysql:
@@ -73,7 +88,75 @@ services:
       - redis_data:/data
     restart: always
 
+  # ============ M6+ RAG 鍩虹璁炬柦 ============
+  # Milvus Standalone锛氬悜閲忓簱锛坔ost 缃戠粶/妗ユ帴鍧囧彲锛涜繖閲岀敤 bridge锛屽浐瀹氱鍙ｏ級
+  milvus:
+    # 必须 >= 2.5：BM25 Function（全文检索）是 2.5 才引入的。
+    # 2.4.x 会静默忽略 schema 里的 functions，导致 sparse_bm25 退化成必填字段。
+    image: milvusdb/milvus:v2.5.4
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    depends_on:
+      - etcd
+      - minio
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      # host 绔彛 19530 鏆撮湶缁欐湰鍦?AI 杩涚▼锛涘鍣ㄥ唴閮?ai/milvus 闂磋蛋 bridge
+      - "19530:19530"
+      - "9091:9091"
+    restart: always
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - etcd_data:/etcd
+    command:
+      [
+        "etcd",
+        "-advertise-client-urls=http://etcd:2379",
+        "-listen-client-urls",
+        "http://0.0.0.0:2379",
+        "--data-dir",
+        "/etcd",
+      ]
+    restart: always
+
+  minio:
+    image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - minio_data:/minio_data
+    command: minio server /minio_data
+    restart: always
+
+  # Reranker 鐙珛鏈嶅姟锛歜ge-reranker-v2-m3锛孋PU 鎺ㄧ悊锛岀鍙?9001
+  ai-reranker:
+    build:
+      context: ../ai-reranker
+    environment:
+      RERANKER_MODEL: BAAI/bge-reranker-v2-m3
+      RERANKER_PORT: "9001"
+      # CPU 鎺ㄧ悊锛氶檺鍒剁嚎绋嬶紝閬垮厤鍜?ai 鎶㈣祫婧?      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    ports:
+      - "9001:9001"
+    depends_on:
+      - etcd # Milvus 璧锋潵鍐嶅惎鍔?reranker锛沬nit 鑴氭湰閲屼篃鍋ュ悍妫€鏌?    restart: always
+
 volumes:
   mysql_data:
   mongo_data:
   redis_data:
+  milvus_data:
+  etcd_data:
+  minio_data:

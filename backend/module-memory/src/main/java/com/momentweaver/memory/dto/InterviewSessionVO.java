@@ -2,7 +2,7 @@ package com.momentweaver.memory.dto;
 
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
-import com.momentweaver.memory.entity.InterviewMessage;
+import com.momentweaver.common.entity.InterviewMessage;
 import com.momentweaver.memory.entity.InterviewSession;
 import lombok.Data;
 

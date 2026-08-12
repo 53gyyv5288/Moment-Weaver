@@ -9,9 +9,10 @@ import type {
   ApiResult,
   InterviewSessionVO,
   InterviewMessageVO,
+  InterviewEvidenceItem,
 } from '@/types/api'
 
-export type { InterviewSessionVO, InterviewMessageVO }
+export type { InterviewSessionVO, InterviewMessageVO, InterviewEvidenceItem }
 
 // ====== 会话管理（普通 JSON） ======
 
@@ -49,6 +50,8 @@ export interface StreamHandlers {
   onToken?: (token: string) => void
   /** 思考链片段（推理模型产生，event: thinking） */
   onThinking?: (token: string) => void
+  /** RAG 历史片段（event: evidence；可能 0-N 次，中途推或下轮前置推） */
+  onEvidence?: (items: InterviewEvidenceItem[]) => void
   onError?: (message: string) => void
   onDone?: () => void
 }
@@ -115,6 +118,9 @@ export async function streamInterviewMessage(
           case 'thinking':
             handlers.onThinking?.(data)
             break
+          case 'evidence':
+            handlers.onEvidence?.(parseEvidence(data))
+            break
           case 'error':
             handlers.onError?.(data)
             break
@@ -131,5 +137,22 @@ export async function streamInterviewMessage(
     } catch {
       /* ignore */
     }
+  }
+}
+
+/**
+ * 防御性解析 evidence 事件 data。失败返回 []，调用方按空处理。
+ */
+function parseEvidence(data: string): InterviewEvidenceItem[] {
+  if (!data || data === '{}') return []
+  try {
+    const parsed = JSON.parse(data)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (x): x is InterviewEvidenceItem =>
+        x && typeof x === 'object' && typeof x.text === 'string',
+    )
+  } catch {
+    return []
   }
 }

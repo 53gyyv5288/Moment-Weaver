@@ -41,6 +41,38 @@ class Settings(BaseSettings):
     mongo_db: str = "moment_weaver"
     redis_url: str = "redis://localhost:6379/0"
 
+    # ============ RAG（M6+ Phase 0）============
+    # DashScope Embedding（多语种，1024 维）
+    dashscope_api_key: str = ""
+    embedding_model: str = "text-embedding-v3"
+    embedding_dim: int = 1024
+    embedding_batch_size: int = 16  # DashScope 单次最多 25 文本/请求，留 9 余量
+    embedding_qps_limit: float = 30.0  # 保守值；官方限 60，留一半
+
+    # Milvus（Standalone，Docker 本地）
+    milvus_uri: str = "http://localhost:19530"
+    milvus_token: str = ""  # Standalone 不需要；生产 zilliz cloud 才用
+    milvus_db: str = "default"
+    milvus_collection_interview: str = "interview_chunks"
+    milvus_collection_asset: str = "asset_chunks"
+
+    # Reranker 独立服务
+    reranker_url: str = "http://localhost:9001"
+    # 5s 兜底 Windows 抖动 / 偶发冷启动。实测 max=100 chars × 10 docs 仅需 0.5s，
+    # 留 10x 余量。超时/失败 → pipeline_retrieve 降级到 Milvus 排序。
+    reranker_timeout_s: float = 5.0
+    reranker_max_fallback: bool = True  # reranker 挂掉时降级到 Milvus 排序
+
+    # 检索参数
+    rag_top_k: int = 10  # Milvus 召回候选数（之前 20，CPU rerank 容易超时；减半后留余量）
+    rag_top_k_rerank: int = 5  # rerank 后保留
+    rag_query_rewrite_timeout_s: float = 0.6  # 软超时：采访流不能被 RAG 阻塞
+    rag_query_rewrite_enabled: bool = True
+
+    # 内部服务共享密钥：调 Spring /api/v1/memory/subjects/*/authorizations/check 时
+    # 通过 X-Internal-Secret 头传。生产必须用环境变量覆盖，dev 默认值与 Spring 默认一致。
+    rag_internal_secret: str = "moment-internal-dev-secret-change-me"
+
 
 @lru_cache
 def get_settings() -> Settings:

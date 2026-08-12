@@ -11,6 +11,7 @@ import {
   closeInterviewSession,
   type InterviewSessionVO,
   type InterviewMessageVO,
+  type InterviewEvidenceItem,
 } from '@/api/interview'
 import { summarizeSession } from '@/api/summary'
 
@@ -29,6 +30,12 @@ const scroller = ref<HTMLElement | null>(null)
 // 流进行中：自动展开当前消息的面板；流结束：自动折叠。
 const liveThinking = ref('')
 const activeCollapse = ref<string[]>([])
+
+// RAG 历史片段面板：liveEvidence 用于流进行中的实时片段；
+// 流结束会把 liveEvidence 落到 assistant.evidence 上，再清空。
+// 默认折叠（evidence 是参考资料，不打断阅读）。
+const liveEvidence = ref<InterviewEvidenceItem[]>([])
+const activeEvidence = ref<string[]>([])
 
 const visibleMessages = computed(() =>
   (session.value?.messages || []).filter(m => m.role !== 'system'),
@@ -73,7 +80,9 @@ async function onSend() {
   // 2) 流式开始：记录当前 assistant 在 visibleMessages 里的位置
   const assistantIdx = visibleMessages.value.length - 1
   const panelId = panelKey(assistantIdx)
+  const evidencePanelId = `evidence-${assistantIdx}`
   liveThinking.value = ''
+  liveEvidence.value = []
 
   streaming.value = true
   try {
@@ -93,6 +102,18 @@ async function onSend() {
         }
         nextTick(scrollToBottom)
       },
+      onEvidence: (items) => {
+        // RAG 跨 session 历史片段；可能 0-N 次（中途推或下轮前置推）
+        // 直接覆盖式追加最新结果（后端会按 score 降序）
+        liveEvidence.value = items
+        assistantMsg.evidence = items
+        session.value!.messages = [...session.value!.messages]
+        // 自动展开当前消息的 evidence 面板（用户首次看到参考资料）
+        if (items.length && !activeEvidence.value.includes(evidencePanelId)) {
+          activeEvidence.value = [...activeEvidence.value, evidencePanelId]
+        }
+        nextTick(scrollToBottom)
+      },
       onError: (msg) => {
         ElMessage.error('AI 错误：' + msg)
       },
@@ -104,6 +125,8 @@ async function onSend() {
         }
         liveThinking.value = ''
         activeCollapse.value = activeCollapse.value.filter(k => k !== panelId)
+        // evidence 已经在 onEvidence 时落库，这里仅清空 live
+        liveEvidence.value = []
       },
     })
   } catch (e: any) {
@@ -111,6 +134,7 @@ async function onSend() {
     // 异常路径：同样清理面板状态
     liveThinking.value = ''
     activeCollapse.value = activeCollapse.value.filter(k => k !== panelId)
+    liveEvidence.value = []
   } finally {
     streaming.value = false
   }
@@ -221,6 +245,42 @@ onMounted(load)
               </template>
               <div class="ir__think-body">
                 {{ idx === visibleMessages.length - 1 && streaming ? liveThinking : m.thinking }}
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+
+          <!-- RAG 跨 session 历史片段面板：仅 assistant + 有 evidence 时渲染 -->
+          <el-collapse
+            v-if="m.role === 'assistant' && ((m.evidence && m.evidence.length) || (streaming && idx === visibleMessages.length - 1 && liveEvidence.length))"
+            v-model="activeEvidence"
+            class="ir__evidence"
+          >
+            <el-collapse-item :name="`evidence-${idx}`">
+              <template #title>
+                <span class="ir__evidence-title">
+                  <span class="ir__evidence-icon">📚</span>
+                  <span class="ir__evidence-label">参考资料</span>
+                  <span class="ir__evidence-count">
+                    {{ (m.evidence || (streaming && idx === visibleMessages.length - 1 ? liveEvidence : [])).length }} 条
+                  </span>
+                </span>
+              </template>
+              <div class="ir__evidence-body">
+                <div
+                  v-for="(item, i) in (m.evidence || (streaming && idx === visibleMessages.length - 1 ? liveEvidence : []))"
+                  :key="i"
+                  class="ir__evidence-item"
+                >
+                  <div class="ir__evidence-meta">
+                    <el-tag size="small" type="info" effect="plain">
+                      session: {{ item.sessionId ? item.sessionId.slice(0, 8) : '?' }}
+                    </el-tag>
+                    <el-tag size="small" type="success" effect="plain">
+                      score {{ item.score.toFixed(2) }}
+                    </el-tag>
+                  </div>
+                  <div class="ir__evidence-text">{{ item.text }}</div>
+                </div>
               </div>
             </el-collapse-item>
           </el-collapse>
@@ -363,5 +423,62 @@ onMounted(load)
   border-radius: 0 4px 4px 0;
   padding-top: 6px;
   padding-bottom: 6px;
+}
+
+/* RAG 参考资料面板：浅米色底 + 暖橙左线（与思考链区分） */
+.ir__evidence {
+  margin-bottom: 8px;
+  border: 1px solid var(--mw-border, #e5e7eb);
+  border-radius: 6px;
+  background: #fef3c7;
+}
+.ir__evidence :deep(.el-collapse-item__header) {
+  border-bottom: none;
+  padding-left: 10px;
+  min-height: 32px;
+  font-size: 12px;
+  color: #92400e;
+}
+.ir__evidence :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+}
+.ir__evidence :deep(.el-collapse-item__content) {
+  padding: 0 10px 10px 10px;
+}
+.ir__evidence-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ir__evidence-icon { font-size: 13px; }
+.ir__evidence-label { font-weight: 500; }
+.ir__evidence-count {
+  color: #b45309;
+  font-size: 11px;
+  margin-left: 4px;
+}
+.ir__evidence-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.ir__evidence-item {
+  border-left: 3px solid var(--mw-primary, #d97706);
+  padding: 6px 8px;
+  background: #fffbeb;
+  border-radius: 0 4px 4px 0;
+}
+.ir__evidence-meta {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.ir__evidence-text {
+  color: #4b5563;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: 13px;
 }
 </style>

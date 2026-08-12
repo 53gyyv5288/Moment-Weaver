@@ -1,0 +1,12 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+tenacity>=8.3.0
+
+# 用 sentence-transformers 替代 FlagEmbedding。
+# 原因：FlagEmbedding 1.2.x 内部同时 import transformers.trainer（需要 4.41+ 的 EncoderDecoderCache）
+# 和调 tokenizer.prepare_for_model()（4.41+ 移除）。任何 transformers 版本都不能同时满足两个要求。
+# sentence-transformers 的 CrossEncoder 直接支持 bge-reranker-v2-m3，依赖树干净。
+sentence-transformers>=3.0,<4.0
+
+# torch 不在这里列（由 Dockerfile 单独 RUN 从 PyTorch CPU 源装，避免被默认源替换成 GPU 版）

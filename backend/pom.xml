@@ -28,6 +28,7 @@
         <module>module-share</module>
         <module>module-notification</module>
         <module>module-export</module>
+        <module>module-rag</module>
     </modules>
 
     <properties>
@@ -85,6 +86,11 @@
             <dependency>
                 <groupId>com.momentweaver</groupId>
                 <artifactId>module-export</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.momentweaver</groupId>
+                <artifactId>module-rag</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

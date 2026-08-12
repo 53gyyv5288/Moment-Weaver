@@ -11,11 +11,14 @@ import com.momentweaver.common.event.NotificationRequest;
 import com.momentweaver.common.event.NotificationTypes;
 import com.momentweaver.common.event.TimelineEventRequest;
 import com.momentweaver.common.event.TimelineEventTypes;
-import com.momentweaver.memory.entity.InterviewMessage;
+import com.momentweaver.common.entity.InterviewMessage;
 import com.momentweaver.memory.entity.InterviewSession;
 import com.momentweaver.memory.entity.Subject;
 import com.momentweaver.memory.mapper.SubjectMapper;
 import com.momentweaver.memory.repo.InterviewSessionRepository;
+import com.momentweaver.rag.client.RagClient;
+import com.momentweaver.rag.dto.EvidenceChunk;
+import com.momentweaver.rag.dto.SearchRequest;
 import com.momentweaver.timeline.config.AiNarrativeClient;
 import com.momentweaver.timeline.dto.AiNarrativeRequest;
 import com.momentweaver.timeline.dto.AiNarrativeResponse;
@@ -40,9 +43,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * 成稿服务（M4）。
@@ -63,16 +68,23 @@ public class DraftService {
     private final InterviewSessionRepository sessionRepo;
     private final AssetMapper assetMapper;
     private final AiNarrativeClient aiNarrativeClient;
+    private final RagClient ragClient;
     private final ApplicationEventPublisher eventPublisher;
 
     /**
-     * 单次喂给 LLM 的 facts 上限。
+     * 单次喂给 LLM 的 facts 上限（RAG 合并后）。
      * <p>背景：MiniMax-M3 等推理模型在 prompt 接近/超过 8K token 时
      * 容易返回空 content（200 OK 但 content=""），实测 56 条事实触发过。
      * factsSnapshot 仍然全量保存在 DB（审计 + 重写），仅在 buildAiRequest
      * 截断喂给 AI。
+     *
+     * <p>从 30 → 60：RAG 注入后 top-10 相关 facts 跟原 snapshot 合并，
+     * 增加上限能保留更多 grounding 证据，减少幻觉。
      */
-    private static final int AI_FACTS_LIMIT = 30;
+    private static final int AI_FACTS_LIMIT = 60;
+
+    /** RAG 检索 top_k（plan §4.3.C：top-10 相关 facts）。 */
+    private static final int RAG_FACTS_TOP_K = 10;
 
     /**
      * 创建空 draft（不调 AI）。同时收集 facts 冻入 factsSnapshot，
@@ -230,8 +242,9 @@ public class DraftService {
                 s.setProvenance("human");
             }
         } else {
-            // AI 重写
-            AiNarrativeRequest aiReq = buildAiRequest(d);
+            // AI 重写：RAG 用 section 标题 + 当前内容作 query，拿到相关 facts 再喂 LLM
+            String sectionBrief = s.getSectionTitle() + " " + abbreviate(s.getContent(), 80);
+            AiNarrativeRequest aiReq = buildAiRequest(d, sectionBrief);
             String newContent = aiNarrativeClient.regenerateSection(
                 d.getTemplateId(), s.getSectionId(), s.getSectionTitle(),
                 s.getContent(), req.getRewriteStyle(), aiReq);
@@ -403,6 +416,19 @@ public class DraftService {
     // ============ AI helpers ============
 
     private AiNarrativeRequest buildAiRequest(NarrativeDraft d) {
+        return buildAiRequest(d, null);
+    }
+
+    /**
+     * 构造 AI 请求（含 RAG grounding 增强）。
+     *
+     * <p>plan §4.3.C：
+     *   - 在 collectFacts() 返回的事实列表基础上，额外调 RAG 拉 top-N 相关 facts
+     *     （filter is_curated_for_facts == true）
+     *   - 合并去重后喂 LLM
+     *   - factsSnapshot 仍保存全量（DB 审计），仅 buildAiRequest 截断到 AI_FACTS_LIMIT
+     */
+    private AiNarrativeRequest buildAiRequest(NarrativeDraft d, String sectionBrief) {
         List<AiNarrativeRequest.SubjectItem> subjects = new ArrayList<>();
         if (d.getSubjectIds() != null) {
             for (int i = 0; i < d.getSubjectIds().size(); i++) {
@@ -416,34 +442,57 @@ public class DraftService {
                     .build());
             }
         }
-        List<AiNarrativeRequest.FactItem> facts = new ArrayList<>();
+
+        // 1) 收集基线 facts（时间倒序截断到 AI_FACTS_LIMIT，留位置给 RAG）
+        List<NarrativeDraft.FactSnapshot> baseline = new ArrayList<>();
         if (d.getFactsSnapshot() != null) {
-            // factsSnapshot 保留全量（DB 审计 / 后续重写复用），
-            // 喂给 LLM 前按时间倒序截断到 30 条，避免超 8K token 或触发 MiniMax-M3 内容策略
-            List<NarrativeDraft.FactSnapshot> sorted = d.getFactsSnapshot().stream()
+            baseline = d.getFactsSnapshot().stream()
                 .sorted((a, b) -> {
                     LocalDateTime ta = a.getTimestamp();
                     LocalDateTime tb = b.getTimestamp();
                     if (ta == null && tb == null) return 0;
-                    if (ta == null) return 1;  // null 排最后
+                    if (ta == null) return 1;
                     if (tb == null) return -1;
-                    return tb.compareTo(ta);  // 倒序：新的在前
+                    return tb.compareTo(ta);
                 })
-                .limit(AI_FACTS_LIMIT)
+                .limit(AI_FACTS_LIMIT - RAG_FACTS_TOP_K)  // 给 RAG 留位置
                 .toList();
-            for (NarrativeDraft.FactSnapshot f : sorted) {
-                facts.add(AiNarrativeRequest.FactItem.builder()
-                    .factId(f.getFactId())
-                    .source(f.getSource())
-                    .text(f.getText())
-                    .subjectId(f.getSubjectId())
-                    .timestamp(f.getTimestamp())
-                    .build());
+        }
+
+        // 2) RAG grounding：按 sectionBrief 或 d.title 拉 top-N 相关 facts
+        List<NarrativeDraft.FactSnapshot> ragFacts = fetchRagFacts(d, sectionBrief);
+
+        // 3) 合并去重（按 factId） + 截断
+        Set<String> seen = new HashSet<>();
+        List<NarrativeDraft.FactSnapshot> merged = new ArrayList<>();
+        // baseline 优先
+        for (NarrativeDraft.FactSnapshot f : baseline) {
+            if (f.getFactId() != null && seen.add(f.getFactId())) {
+                merged.add(f);
             }
         }
-        log.debug("AI request built: templateId={}, subjects={}, facts={}/{} (truncated to {})",
+        // RAG 补充
+        for (NarrativeDraft.FactSnapshot f : ragFacts) {
+            if (f.getFactId() != null && seen.add(f.getFactId())) {
+                merged.add(f);
+            }
+            if (merged.size() >= AI_FACTS_LIMIT) break;
+        }
+
+        // 4) 转 FactItem
+        List<AiNarrativeRequest.FactItem> facts = new ArrayList<>(merged.size());
+        for (NarrativeDraft.FactSnapshot f : merged) {
+            facts.add(AiNarrativeRequest.FactItem.builder()
+                .factId(f.getFactId())
+                .source(f.getSource())
+                .text(f.getText())
+                .subjectId(f.getSubjectId())
+                .timestamp(f.getTimestamp())
+                .build());
+        }
+        log.debug("AI request built: templateId={}, subjects={}, facts={} (baseline={}, rag={})",
             d.getTemplateId(), subjects.size(), facts.size(),
-            d.getFactsSnapshot() == null ? 0 : d.getFactsSnapshot().size(), AI_FACTS_LIMIT);
+            baseline.size(), ragFacts.size());
         return AiNarrativeRequest.builder()
             .templateId(d.getTemplateId())
             .subjects(subjects)
@@ -451,8 +500,65 @@ public class DraftService {
             .build();
     }
 
+    /**
+     * RAG：拉 top-N 相关 facts（filter is_curated_for_facts == true）。
+     * 失败 / 空 → 返回空 list（baseline 已能覆盖基础需求）。
+     */
+    private List<NarrativeDraft.FactSnapshot> fetchRagFacts(NarrativeDraft d, String sectionBrief) {
+        try {
+            String query = sectionBrief;
+            if (query == null || query.isBlank()) {
+                // 退到 draft 标题 + subject 列表
+                StringBuilder sb = new StringBuilder();
+                if (d.getTitle() != null) sb.append(d.getTitle()).append(" ");
+                if (d.getSubjectDisplayNames() != null) {
+                    for (String n : d.getSubjectDisplayNames()) {
+                        if (n != null) sb.append(n).append(" ");
+                    }
+                }
+                query = sb.toString().trim();
+            }
+            if (query.isBlank() || d.getSubjectIds() == null || d.getSubjectIds().isEmpty()) {
+                return List.of();
+            }
+            // 单 subject 取第一个；多 subject family-template 时遍历取并集
+            String primarySubject = d.getSubjectIds().get(0);
+            List<EvidenceChunk> chunks = ragClient.searchEvidence(
+                SearchRequest.SCENARIO_NARRATIVE_FACTS, query, primarySubject,
+                Long.valueOf(d.getOwnerId() == null ? "0" : d.getOwnerId()));
+            if (chunks == null || chunks.isEmpty()) return List.of();
+            List<NarrativeDraft.FactSnapshot> out = new ArrayList<>();
+            int i = 0;
+            for (EvidenceChunk c : chunks) {
+                if (c.parentText() == null || c.parentText().isBlank()) continue;
+                String factId = "rag-" + UUID.nameUUIDFromBytes(
+                    (primarySubject + ":" + c.chunkId()).getBytes());
+                out.add(NarrativeDraft.FactSnapshot.builder()
+                    .factId(factId)
+                    .source("rag_evidence")
+                    .text(c.parentText())
+                    .subjectId(primarySubject)
+                    .timestamp(LocalDateTime.now())
+                    .build());
+                if (++i >= RAG_FACTS_TOP_K) break;
+            }
+            log.info("Draft {} RAG facts fetched: {} chunks (subject={})",
+                d.getId(), out.size(), primarySubject);
+            return out;
+        } catch (Exception e) {
+            log.warn("Draft {} RAG facts fetch failed (non-fatal): {}", d.getId(), e.toString());
+            return List.of();
+        }
+    }
+
     private static String truncate(String s, int max) {
         if (s == null) return null;
+        s = s.strip();
+        return s.length() > max ? s.substring(0, max) + "..." : s;
+    }
+
+    private static String abbreviate(String s, int max) {
+        if (s == null) return "";
         s = s.strip();
         return s.length() > max ? s.substring(0, max) + "..." : s;
     }

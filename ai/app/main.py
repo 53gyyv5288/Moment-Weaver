@@ -8,6 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.routers import asset, health, interview, narrative, summarize, share_preview, notify, moderation
+from app.rag import embedder as rag_embedder
+from app.rag import milvus_client as rag_milvus
+from app.rag import reranker_client as rag_reranker
+from app.rag.routers import rag as rag_router
 
 settings = get_settings()
 
@@ -26,9 +30,26 @@ logging.getLogger("app").setLevel(getattr(logging, settings.log_level.upper(), l
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动钩子：可在此初始化 DeepSeek client、Redis 池等
+    # RAG：配置 DashScope、连 Milvus、建 collection、健康检查 reranker、预热
+    try:
+        rag_embedder.configure()
+        rag_milvus.ensure_collections()
+        rag_milvus.warmup()
+        rag_ok = await rag_reranker.healthcheck()
+        logging.getLogger("app").info(
+            "RAG init: reranker_healthcheck=%s collections=%s",
+            rag_ok,
+            rag_milvus.get_client().list_collections(),
+        )
+    except Exception as e:  # noqa: BLE001
+        # RAG 启动失败不阻塞主 AI 启动（采访 / 叙事不受影响），只是 RAG 路由会降级
+        logging.getLogger("app").warning("RAG init failed (continuing without RAG): %s", e)
     yield
     # 关闭钩子
+    try:
+        rag_milvus.close_client()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 app = FastAPI(
@@ -56,6 +77,8 @@ app.include_router(summarize.router, prefix="/api/v1/summarize", tags=["summariz
 app.include_router(share_preview.router, prefix="/api/v1/share-preview", tags=["share-preview"])
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
 app.include_router(moderation.router, prefix="/api/v1/moderation", tags=["moderation"])
+# M6+ RAG（plan §4.1）
+app.include_router(rag_router.router, prefix="/api/v1/rag", tags=["rag"])
 
 
 @app.get("/")
