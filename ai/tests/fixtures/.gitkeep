@@ -1,0 +1,5 @@
+"""fixtures directory placeholder.
+
+gitkeep ensures the directory is tracked even before recallset.jsonl is generated.
+Run `python ai/scripts/gen_test_queries.py` to generate recallset.jsonl.
+"""
