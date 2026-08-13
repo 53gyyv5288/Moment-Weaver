@@ -33,11 +33,14 @@ public class RagIngestListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onInterviewAppended(InterviewMessageAppendedEvent e) {
         try {
+            // Step 1.4+：传 turnId 给 ingest，用于 chunk_id 稳定锚点
             boolean ok = ragIngestService.ingestInterviewSession(
                 e.getSubjectId(), e.getSessionId(),
+                e.getTurnId(),
                 e.getAppendedMessages(), e.getStartTurnIndex());
-            log.debug("RAG ingest for session {} (appended={}, startTurnIndex={}): {}",
-                e.getSessionId(), e.getAppendedMessages().size(),
+            log.debug("RAG ingest for session {} turn={} (appended={}, startTurnIndex={}): {}",
+                e.getSessionId(), e.getTurnId(),
+                e.getAppendedMessages().size(),
                 e.getStartTurnIndex(), ok ? "ok" : "skipped");
         } catch (Exception ex) {
             log.warn("RAG ingest for session {} failed: {}", e.getSessionId(), ex.toString());

@@ -26,6 +26,10 @@ import com.momentweaver.rag.event.InterviewMessageAppendedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -35,6 +39,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -50,6 +55,8 @@ public class InterviewService {
     private final RagClient ragClient;
     private final ApplicationEventPublisher eventPublisher;
     private final ShortTermMemoryService stmService;
+    /** MongoTemplate 用于 atomic update（$push / $set），避免多端并发写入丢消息。 */
+    private final MongoTemplate mongoTemplate;
 
     /**
      * RAG 同步等待的阻塞上限（ms）。略大于 RagProperties.searchSoftTimeoutMs=6000，
@@ -150,17 +157,29 @@ public class InterviewService {
         // 这样 chunk_id 是 stable：interview:{sid}:turn_{startTurnIndex}
         final int startTurnIndex = countExistingTurns(sess);
 
-        // 2) 追加 user 消息
+        // 2) 追加 user 消息（Step 1.2 + Step 2）：
+        //    - 生成 turnId，user + assistant 共享
+        //    - user 落库时 turnStatus = PENDING（等 assistant）
+        //    - 用 mongoTemplate atomic $push 替代 sessionRepo.save(sess)，避免多端并发 save 互相覆盖丢消息
         LocalDateTime now = LocalDateTime.now();
+        final String turnId = UUID.randomUUID().toString();
         InterviewMessage userMsg = InterviewMessage.builder()
             .role("user")
             .source("human")
             .content(userContent)
+            .turnId(turnId)
+            .turnStatus(InterviewMessage.TurnStatus.PENDING)
             .createdAt(now)
             .build();
+        // Mongo atomic: $push user message + $set lastMessageAt
+        mongoTemplate.updateFirst(
+            Query.query(Criteria.where("_id").is(sessionId)),
+            new Update().push("messages", userMsg).set("lastMessageAt", now),
+            InterviewSession.class
+        );
+        // 内存视图同步（countExistingTurns 等本地逻辑仍走 sess；Mongo 是权威）
         sess.getMessages().add(userMsg);
         sess.setLastMessageAt(now);
-        sessionRepo.save(sess);
 
         // 2.5) STM：把 user 消息推入 Redis recent 列表（用于压缩 + 跨 turn 上下文）
         //    - 失败不阻塞（消息已在 Mongo，Redis 挂了走 Mongo 全量降级）
@@ -221,29 +240,61 @@ public class InterviewService {
                 String thinking = accThink.toString();
                 List<InterviewMessage> appendedThisTurn = new ArrayList<>();
                 appendedThisTurn.add(userMsg); // 本轮 user 也算新增（虽然已在 step2 写入）
-                InterviewMessage assistant = null;
+
+                // Step 1.2 + Step 2：原子操作（拆两步，避开 MongoDB code 40 冲突）
+                //   - MongoDB 不允许「$set messages.X.字段」和「$push messages」同一次 update：
+                //     同一个 path 既被数组本身改又被数组里某元素改会报 "conflict at 'messages'"。
+                //   - 拆成两个独立 updateFirst：①$set user 的 turnStatus；②$push assistant。
+                //     两个都是原子，毫秒级 race window 内 turnId 唯一锚定，不会冲突。
                 if (!full.isEmpty()) {
-                    assistant = InterviewMessage.builder()
+                    InterviewMessage assistant = InterviewMessage.builder()
                         .role("assistant")
                         .source("ai_generated")
                         .content(full)
                         // 仅在真有思考链内容时落库，避免给老格式文档写一堆空串
                         .thinking(thinking.isEmpty() ? null : thinking)
+                        .turnId(turnId)
+                        .turnStatus(InterviewMessage.TurnStatus.COMPLETED)
                         .createdAt(LocalDateTime.now())
                         .build();
-                    sess.getMessages().add(assistant);
+                    // Step A：把 user 转 COMPLETED（只改 messages 数组里的元素字段，不动数组本身）
+                    mongoTemplate.updateFirst(
+                        Query.query(Criteria.where("_id").is(sessionId)
+                            .and("messages.turnId").is(turnId)
+                            .and("messages.turnStatus").is(InterviewMessage.TurnStatus.PENDING.name())),
+                        new Update()
+                            .set("messages.$.turnStatus", InterviewMessage.TurnStatus.COMPLETED.name())
+                            .set("lastMessageAt", LocalDateTime.now()),
+                        InterviewSession.class
+                    );
+                    // Step B：$push assistant（只动 messages 数组，不碰元素字段）
+                    mongoTemplate.updateFirst(
+                        Query.query(Criteria.where("_id").is(sessionId)),
+                        new Update()
+                            .push("messages", assistant)
+                            .set("lastMessageAt", LocalDateTime.now()),
+                        InterviewSession.class
+                    );
                     appendedThisTurn.add(assistant);
-                }
-                sess.setLastMessageAt(LocalDateTime.now());
-                sessionRepo.save(sess);
-                log.info("Interview session {} assistant message saved (text={} chars, thinking={} chars)",
-                    sessionId, accText.length(), accThink.length());
 
-                // 2.6) STM：assistant 消息也推入 Redis recent（下轮 verbatim 用）。
-                //      - 不阻塞：失败 log warn；Mongo 已有，Redis 降级下次触发 warmUp。
-                if (assistant != null) {
+                    // 2.6) STM：assistant 消息也推入 Redis recent（下轮 verbatim 用）。
+                    //      - 不阻塞：失败 log warn；Mongo 已有，Redis 降级下次触发 warmUp。
                     stmService.appendRecent(sessionId, assistant);
+                } else {
+                    // 空响应（模型没产出文本）：只把 user 标记 COMPLETED（不算 FAILED，是合法的"无回答"）
+                    // 这条单独 update 没问题：只 $set messages.$.turnStatus，不碰 messages 本身。
+                    mongoTemplate.updateFirst(
+                        Query.query(Criteria.where("_id").is(sessionId)
+                            .and("messages.turnId").is(turnId)
+                            .and("messages.turnStatus").is(InterviewMessage.TurnStatus.PENDING.name())),
+                        new Update()
+                            .set("messages.$.turnStatus", InterviewMessage.TurnStatus.COMPLETED.name())
+                            .set("lastMessageAt", LocalDateTime.now()),
+                        InterviewSession.class
+                    );
                 }
+                log.info("Interview session {} turn {} completed (text={} chars, thinking={} chars)",
+                    sessionId, turnId, accText.length(), accThink.length());
 
                 // 触发时间线事件（M3 解耦：module-timeline 监听并写库）
                 // 注意：思考链不进时间线预览，避免污染 Timeline 列表。
@@ -256,32 +307,65 @@ public class InterviewService {
                         sessionId,
                         "AI 采访官 · " + (sess.getSubjectDisplayName() == null ? "采访" : sess.getSubjectDisplayName()),
                         preview,
-                        java.util.Map.of("sessionId", sessionId, "role", "assistant")
+                        java.util.Map.of("sessionId", sessionId, "role", "assistant", "turnId", turnId)
                     ));
                 }
 
                 // 触发 RAG ingest：本轮 user + assistant 都进 Milvus（AFTER_COMMIT）
                 try {
                     eventPublisher.publishEvent(new InterviewMessageAppendedEvent(
-                        this, sess.getSubjectId(), sessionId, appendedThisTurn, startTurnIndex));
+                        this, sess.getSubjectId(), sessionId, turnId, appendedThisTurn, startTurnIndex));
                 } catch (Exception ex) {
                     log.warn("publish InterviewMessageAppendedEvent failed: {}", ex.toString());
                 }
             })
-            .doOnError(e -> log.error("Interview session {} stream error", sessionId, e));
+            .doOnError(e -> {
+                // Step 1.2：流中断/错误 → 把对应 turn 标记为 FAILED（仅当仍为 PENDING）
+                //   - FAILED 表示该 turn 永远不会有 assistant 到位（区别于 COMPLETED）
+                //   - 前端可据此显示"已发送未回复"或允许重发
+                log.error("Interview session {} turn {} stream error", sessionId, turnId, e);
+                markTurnFailed(sessionId, turnId);
+            });
     }
 
     /**
-     * 统计当前 session 中已有的 user/assistant turn 数（用于增量 RAG ingest 起始索引）。
-     * 注意：user 消息数即 turn 数（每个 user 通常对应一个 assistant，没有 assistant 也算 1 turn）。
+     * 统计当前 session 中已有的 turn 数（用于增量 RAG ingest 起始索引）。
+     * <p>Step 1.2+：按 <b>distinct turnId</b> 计数（一个 turnId = 一对 user+assistant）。
+     * 旧 session（消息无 turnId）→ fallback 到按 user role 计数，保持向后兼容。
      */
     private int countExistingTurns(InterviewSession sess) {
         if (sess.getMessages() == null) return 0;
-        int n = 0;
+        java.util.Set<String> turnIds = new java.util.HashSet<>();
+        int userOnlyCount = 0;
         for (InterviewMessage m : sess.getMessages()) {
-            if ("user".equals(m.getRole())) n++;
+            if (m.getTurnId() != null) {
+                turnIds.add(m.getTurnId());
+            }
+            if ("user".equals(m.getRole())) {
+                userOnlyCount++;
+            }
         }
-        return n;
+        // 如果整 session 都没有 turnId（旧数据），回退到 user 计数
+        return turnIds.isEmpty() ? userOnlyCount : turnIds.size();
+    }
+
+    /**
+     * 把指定 turnId 的 PENDING user 标记为 FAILED（流中断时调用）。
+     * <p>仅匹配 turnStatus=PENDING 的 user 消息，避免覆盖已 COMPLETED 的 turn。
+     * <p>用 mongoTemplate atomic update，不读 sess，避免与 doOnComplete 的 $push 产生竞态。
+     */
+    private void markTurnFailed(String sessionId, String turnId) {
+        try {
+            mongoTemplate.updateFirst(
+                Query.query(Criteria.where("_id").is(sessionId)
+                    .and("messages.turnId").is(turnId)
+                    .and("messages.turnStatus").is(InterviewMessage.TurnStatus.PENDING.name())),
+                new Update().set("messages.$.turnStatus", InterviewMessage.TurnStatus.FAILED.name()),
+                InterviewSession.class
+            );
+        } catch (Exception ex) {
+            log.warn("markTurnFailed sid={} turnId={} failed: {}", sessionId, turnId, ex.toString());
+        }
     }
 
     /**

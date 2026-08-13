@@ -138,6 +138,20 @@ export interface InterviewMessageVO {
    * 仅 assistant 消息可能携带；老文档没有。
    */
   evidence?: InterviewEvidenceItem[]
+  /**
+   * Turn 配对 ID（M8+）：同一对的 user + assistant 共享同一个 turnId；
+   * system 消息此字段为 undefined。
+   * 用作 v-for :key 让 Vue 渲染更稳定（比 idx 更鲁棒，避免插入时复用错位）。
+   */
+  turnId?: string
+  /**
+   * Turn 状态（M8+）：仅 user 消息有意义。
+   * - PENDING：user 已落库，等 assistant（流进行中）
+   * - COMPLETED：user + assistant 都到位
+   * - FAILED：流中断 / 错误，assistant 永远缺席
+   * 老文档此字段为 undefined，UI 应兜底按 COMPLETED 处理。
+   */
+  turnStatus?: 'PENDING' | 'COMPLETED' | 'FAILED'
 }
 
 /** RAG 检索片段（前后端 snake_case 一致） */

@@ -31,17 +31,29 @@ public class RagIngestService {
      * 单 session 的增量 messages → ingest payload。
      * <p>注意：plan §2.3 + §7 「思考链不索引」—— assistant 的 thinking 字段不进入 chunk_text。
      *
-     * <p>startTurnIndex：本批 messages 在 session 中的起始 turn 索引（由 InterviewService 计算）。
-     * 这样增量 ingest 不会反复覆盖 turn_0，而是写到正确的 turn_N 位置。
+     * <p>Step 1.4+：chunk_id 用 <b>turnId</b> 而不是 startTurnIndex 累加。
+     * <ul>
+     *   <li>turnId 是 UUID，全局唯一，重试 / 并发不会冲突</li>
+     *   <li>startTurnIndex 在多端并发时可能漂移（两个调用同时读到 index=5，都写 turn_5）</li>
+     *   <li>window_id（win_）仍用 startTurnIndex 做 3 轮窗口分组（hash-modulo 会冲突）</li>
+     * </ul>
+     * <p>turnId 兜底：本批消息都不含 turnId（旧数据）→ fallback 到 startTurnIndex。
      */
     public boolean ingestInterviewSession(String subjectId, String sessionId,
+                                          String turnId,
                                           List<InterviewMessage> messages,
                                           int startTurnIndex) {
         if (messages == null || messages.isEmpty()) return false;
         // chunk_id 规则与 AI 端 chunker.interview_chunks 对齐：
-        //   interview:{session_id}:turn_{i}，i 累加 (user/assistant 对) 数
+        //   interview:{session_id}:turn_{turnId}（UUID 稳定）
+        //   window_id（win_）保留 turnIndex/3 分组（按出现顺序，与 turnId 无关）
         List<IngestRequest.ChunkUpsert> chunks = new ArrayList<>();
         int turnIndex = startTurnIndex;
+        // 兜底：本批消息都没 turnId → 用 turnIndex 拼 chunk_id
+        boolean hasAnyTurnId = false;
+        for (InterviewMessage m : messages) {
+            if (m.getTurnId() != null) { hasAnyTurnId = true; break; }
+        }
         for (int i = 0; i < messages.size(); i++) {
             InterviewMessage m = messages.get(i);
             String role = m.getRole();
@@ -60,16 +72,22 @@ public class RagIngestService {
                 }
                 String chunkText = buildChunkText(userContent, assistantContent);
                 String parentText = buildParentText(userContent, assistantContent);
+                // chunk_id 优先用 user 的 turnId（user/assistant 同 turnId 都行）
+                String msgTurnId = m.getTurnId();
+                String chunkIdSuffix = hasAnyTurnId && msgTurnId != null
+                    ? msgTurnId
+                    : ("idx_" + turnIndex);  // 兜底：老数据用 index
                 Map<String, Object> md = new HashMap<>();
                 md.put("session_id", sessionId);
                 md.put("role", "user+assistant");
                 md.put("turn_index", turnIndex);
+                if (msgTurnId != null) md.put("turn_id", msgTurnId);
                 long ts = m.getCreatedAt() == null
                     ? System.currentTimeMillis()
                     : m.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
                 md.put("created_at_ms", ts);
                 chunks.add(new IngestRequest.ChunkUpsert(
-                    "interview:" + sessionId + ":turn_" + turnIndex,
+                    "interview:" + sessionId + ":turn_" + chunkIdSuffix,
                     "interview:" + sessionId + ":win_" + (turnIndex / 3),
                     chunkText,
                     parentText,

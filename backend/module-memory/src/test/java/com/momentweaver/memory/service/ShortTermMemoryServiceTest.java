@@ -13,20 +13,22 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.argThat;
 
 /**
  * ShortTermMemoryService 单元测试。
@@ -227,14 +229,14 @@ class ShortTermMemoryServiceTest {
     @DisplayName("clear: 删 recent/summary/meta 三个 key")
     void clear_deletesAllKeys() {
         stm.clear("sid-1");
-        verify(redis, times(1)).delete(any());
+        verify(redis, times(1)).delete(Collections.singleton(any()));
     }
 
     @Test
     @DisplayName("clear: sid=null 不抛")
     void clear_nullSafe() {
         stm.clear(null);
-        verify(redis, never()).delete(any());
+        verify(redis, never()).delete((String) any());
     }
 
     // ============ getRecent 正常路径============
@@ -322,17 +324,26 @@ class ShortTermMemoryServiceTest {
         assertThat(stm.shouldCompress("sid-1", recent)).isTrue();
     }
 
-    // ============ 修复 #3：并发压缩去重 ============
+    // ============ Step 3：Redis 分布式锁（替换原 JVM-local inflightLocks） ============
 
     @Test
-    @DisplayName("修复 #3: 同 sid 并发压缩被锁拦下，第二个 task 返回 null（跳过）")
-    void compressAsync_concurrentDedup() {
-        // 拿到 lock 模拟「已有压缩在跑」
-        stm.getInflightLocks().computeIfAbsent("sid-1", k -> new java.util.concurrent.atomic.AtomicBoolean(false))
-            .set(true);
-        // 调 compressAsync → 应被拦下
+    @DisplayName("Step 3: Redis 锁被占时 compressAsync 跳过（SET NX 返回 false）")
+    void compressAsync_concurrentDedup_RedisLock() {
+        // mock SET NX 返回 false → 模拟别的实例持有锁
+        when(redis.opsForValue().setIfAbsent(anyString(), anyString(), any(Duration.class)))
+            .thenReturn(false);
+        // 调 compressAsync → 应被拦下（不会调 LLM）
         var future = stm.compressAsync("sid-1");
-        // future 应已完成且为 null（无 LLM 调用）
+        assertThat(future.isDone()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Step 3: Redis 锁 SET NX 抛异常 → 跳过压缩（不挂掉调用方）")
+    void compressAsync_lockAcquireFails_noThrow() {
+        when(redis.opsForValue().setIfAbsent(anyString(), anyString(), any(Duration.class)))
+            .thenThrow(new RuntimeException("Redis down"));
+        // 不抛异常
+        var future = stm.compressAsync("sid-1");
         assertThat(future.isDone()).isTrue();
     }
 
@@ -350,7 +361,7 @@ class ShortTermMemoryServiceTest {
         // markSidClosed 应该写到 Redis meta（用 hash put）
         verify(hashOps, times(1)).put(anyString(), anyString(), eq("1"));
         // 再删三个 key
-        verify(redis, times(1)).delete(any());
+        verify(redis, times(1)).delete((String) any());
     }
 
     // ============ 修复 #6：summary 长度校验 ============
@@ -410,5 +421,35 @@ class ShortTermMemoryServiceTest {
 
         // 关键断言：appendRecent 没被调（warmUp 检测到 Redis 有内容就 return）
         verify(redis.opsForList(), never()).rightPush(anyString(), anyString());
+    }
+
+    // ============ Step 3：Redis 分布式锁 ============
+
+    @Test
+    @DisplayName("Step 3: compressAsync 拿锁成功后，写完 summary 会调 Lua release 脚本")
+    void compressAsync_releaseUsesLuaScript() {
+        // 模拟 SET NX 成功
+        when(redis.opsForValue().setIfAbsent(anyString(), anyString(), any(Duration.class)))
+            .thenReturn(true);
+        // getSummary 返回空 → 走 rolling 分支 → evictN 计算需要 read recent
+        when(redis.opsForList().range(anyString(), anyLong(), anyLong()))
+            .thenReturn(new ArrayList<>());  // 空 → 跳过 rolling
+        // mock Lua execute 返回 1L（成功 DEL）
+        when(redis.execute(any(org.springframework.data.redis.core.script.RedisScript.class),
+                           any(), any()))
+            .thenReturn(1L);
+
+        stm.compressAsync("sid-1");
+        // 关键断言：releaseLock 调了 redis.execute（即 Lua 脚本）
+        verify(redis, atLeastOnce()).execute(any(org.springframework.data.redis.core.script.RedisScript.class),
+                                              any(), any());
+    }
+
+    @Test
+    @DisplayName("Step 3: clear 时一并删除压缩锁 key")
+    void clear_deletesLockKey() {
+        stm.clear("sid-1");
+        // 应删除 4 个 key：recent + summary + meta + lock
+        verify(redis, times(1)).delete((String) any());
     }
 }

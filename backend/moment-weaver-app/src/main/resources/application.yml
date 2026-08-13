@@ -129,6 +129,9 @@ moment:
       summary-hard-limit-chars: 1500      # summary 字符硬限（超则触发 condense） 生产1500
       condense-max-output-tokens: 600     # condense LLM 输出 cap（Java 端摘要 cap 略小） 生产600
       compress-lock-timeout-ms: 0         # 同 sid 并发锁等待（0=不等待，下轮再试）
+      # Step 3：Redis 分布式压缩锁 TTL（秒）。压缩 task 超时会自动释放（兜底防死锁）。
+      # 默认 60s：滚动摘要 LLM 5-20s + 二次压缩 3-10s，留 3x 余量。
+      compress-lock-ttl-seconds: 60
 
 # 阿里云 OSS（M3 启用）
 aliyun:

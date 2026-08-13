@@ -41,6 +41,35 @@ const visibleMessages = computed(() =>
   (session.value?.messages || []).filter(m => m.role !== 'system'),
 )
 
+/**
+ * M8+：稳定的消息 key —— 优先用 turnId，回退 idx（system / 老数据）。
+ * 解决：插入新消息时 idx 复用错位导致 Vue 复用错误组件实例。
+ */
+function msgKey(m: InterviewMessageVO, idx: number): string {
+  return m.turnId ? `turn-${m.turnId}` : `idx-${idx}`
+}
+
+/**
+ * M8+：当前这条 user 消息的 turnStatus 标签。
+ * - 老的 user 消息没有 turnStatus → undefined → 不显示（已完成的对话）
+ * - PENDING → "发送中"
+ * - FAILED → "未回复" + 重发入口（可选）
+ */
+function turnStatusLabel(m: InterviewMessageVO): string | null {
+  if (m.role !== 'user') return null
+  if (!m.turnStatus) return null
+  if (m.turnStatus === 'PENDING') return '发送中'
+  if (m.turnStatus === 'FAILED') return '未回复'
+  return null // COMPLETED：不显示
+}
+
+function turnStatusType(m: InterviewMessageVO): 'warning' | 'danger' | null {
+  if (m.role !== 'user') return null
+  if (m.turnStatus === 'PENDING') return 'warning'
+  if (m.turnStatus === 'FAILED') return 'danger'
+  return null
+}
+
 async function load() {
   const { data } = await getInterviewSession(sessionId.value)
   if (data && data.code === 0) {
@@ -69,10 +98,22 @@ async function onSend() {
   input.value = ''
 
   // 1) 立即把 user 消息塞进 session 用于渲染
-  const userMsg: InterviewMessageVO = { role: 'user', content: text, source: 'human' }
+  //    M8+：客户端先打 turnStatus=PENDING（视觉上立刻看到"发送中"）；
+  //    流开始时再覆盖成后端真实 turnId（更可靠）。
+  const userMsg: InterviewMessageVO = {
+    role: 'user',
+    content: text,
+    source: 'human',
+    turnStatus: 'PENDING',
+  }
   session.value!.messages.push(userMsg)
-  // 准备一个空 assistant 消息占位
-  const assistantMsg: InterviewMessageVO = { role: 'assistant', content: '', source: 'ai_generated' }
+  // 准备一个空 assistant 消息占位（M8+：同 turnId 标记为"等待"）
+  const assistantMsg: InterviewMessageVO = {
+    role: 'assistant',
+    content: '',
+    source: 'ai_generated',
+    turnStatus: 'PENDING',
+  }
   session.value!.messages.push(assistantMsg)
   await nextTick()
   scrollToBottom()
@@ -116,13 +157,20 @@ async function onSend() {
       },
       onError: (msg) => {
         ElMessage.error('AI 错误：' + msg)
+        // M8+：流中断 → user 标 FAILED（前端乐观标记，UI 即时反馈）
+        userMsg.turnStatus = 'FAILED'
+        assistantMsg.turnStatus = 'FAILED'
+        session.value!.messages = [...session.value!.messages]
       },
       onDone: () => {
         // 流结束：把 live thinking 落到 assistant 消息上，再收起面板
         if (liveThinking.value) {
           assistantMsg.thinking = liveThinking.value
-          session.value!.messages = [...session.value!.messages]
         }
+        // M8+：流完成 → user + assistant 都标 COMPLETED
+        userMsg.turnStatus = 'COMPLETED'
+        assistantMsg.turnStatus = 'COMPLETED'
+        session.value!.messages = [...session.value!.messages]
         liveThinking.value = ''
         activeCollapse.value = activeCollapse.value.filter(k => k !== panelId)
         // evidence 已经在 onEvidence 时落库，这里仅清空 live
@@ -131,6 +179,10 @@ async function onSend() {
     })
   } catch (e: any) {
     ElMessage.error(e?.message || '发送失败')
+    // M8+：异常路径 → user/assistant 都标 FAILED（前端乐观标记）
+    userMsg.turnStatus = 'FAILED'
+    assistantMsg.turnStatus = 'FAILED'
+    session.value!.messages = [...session.value!.messages]
     // 异常路径：同样清理面板状态
     liveThinking.value = ''
     activeCollapse.value = activeCollapse.value.filter(k => k !== panelId)
@@ -218,7 +270,7 @@ onMounted(load)
 
       <div
         v-for="(m, idx) in visibleMessages"
-        :key="idx"
+        :key="msgKey(m, idx)"
         class="ir__msg"
         :class="`ir__msg--${m.role}`"
       >
@@ -288,6 +340,13 @@ onMounted(load)
           <div class="ir__meta">
             <span class="ir__role">{{ m.role === 'user' ? '采访者' : 'AI 采访官' }}</span>
             <el-tag v-if="m.source === 'ai_generated'" size="small" type="warning" effect="plain">AI 生成</el-tag>
+            <!-- M8+：turnStatus 状态标签（PENDING 发送中 / FAILED 未回复） -->
+            <el-tag
+              v-if="turnStatusLabel(m)"
+              size="small"
+              :type="turnStatusType(m) || 'info'"
+              effect="plain"
+            >{{ turnStatusLabel(m) }}</el-tag>
           </div>
           <div class="ir__content">{{ m.content }}<span v-if="streaming && idx === visibleMessages.length - 1 && m.role === 'assistant'" class="ir__cursor">▌</span></div>
         </div>

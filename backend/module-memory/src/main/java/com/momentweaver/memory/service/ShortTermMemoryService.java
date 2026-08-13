@@ -15,9 +15,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 短期记忆（STM）服务：Redis-backed 滚动摘要 + 最近 K 轮 verbatim。
@@ -40,14 +40,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </ul>
  *
  * <p>异步压缩：{@link #compressAsync} 用 {@code summaryExecutor}（与 close-time summary 共享），
- * fire-and-forget，不阻塞 LLM 流。同一 session 串行化（{@link #inflightLocks}）。
+ * fire-and-forget，不阻塞 LLM 流。同一 session 串行化（Step 3：Redis 分布式锁 SET NX，跨实例）。
  *
  * <p>主要修复（M8+）：
  * <ol>
  *   <li>LTRIM 方向：保留最新 K 条而非最老 K 条</li>
  *   <li>shouldCompress 计入 summary 自身 token</li>
  *   <li>evictN 动态计算（不少于 K/2，不多于超出量）</li>
- *   <li>同 session 并发压缩去重（ConcurrentHashMap + AtomicBoolean）</li>
+ *   <li>Step 3：同 session 并发压缩去重改走 Redis 分布式锁（SET NX + Lua CAS release）</li>
  *   <li>session 关闭标志（sidClosed）防止压缩 task 在 clear 后写回</li>
  *   <li>空 summary 死循环防御（emptyStreak 计数 + 跳过 K/2 轮）</li>
  *   <li>summary 长度校验 + 二次压缩触发</li>
@@ -59,6 +59,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ShortTermMemoryService {
 
     private static final String PREFIX = "stm:session:";
+    /** 压缩分布式锁 key 前缀。Step 3：跨实例时用 Redis 锁替代 JVM-local。 */
+    private static final String LOCK_PREFIX = "stm:lock:compress:";
 
     /** 摘要压缩 LLM 端点（融合旧 summary + 被淘汰原文）。 */
     private static final String ROLLING_SUMMARIZE_PATH = "/api/v1/summarize/rolling";
@@ -73,14 +75,27 @@ public class ShortTermMemoryService {
     /** meta version 值（meta schema 版本号；改 schema 时 +1）。 */
     private static final int META_VERSION_VALUE = 2;
 
+    /**
+     * Lua 脚本：DEL 仅当 value 匹配（防止本实例超时后误删别的实例的锁）。
+     * <p>Step 3：Redis 分布式锁释放的「CAS」保护。
+     */
+    private static final String UNLOCK_SCRIPT =
+        "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+        "  return redis.call('del', KEYS[1]) " +
+        "else " +
+        "  return 0 " +
+        "end";
+
     private final StringRedisTemplate redis;
     private final MemoryProperties props;
     private final ObjectMapper mapper;
     private final org.springframework.web.reactive.function.client.WebClient aiWebClient;
+    private final org.springframework.data.redis.core.script.RedisScript<Long> unlockScript;
 
-    /** 同 sid 并发压缩锁（fire-and-forget 串行化，避免两个 task 同时写 summary）。 */
-    private final ConcurrentHashMap<String, AtomicBoolean> inflightLocks = new ConcurrentHashMap<>();
-    /** 同 sid in-flight 压缩任务句柄（close 时等它完成）。 */
+    /**
+     * Step 3：跨实例压缩锁改走 Redis SET NX，不再需要 JVM-local 锁。
+     * 保留 inflightTasks 用于 close() 等任务完成（与锁解耦）。
+     */
     private final ConcurrentHashMap<String, CompletableFuture<Void>> inflightTasks = new ConcurrentHashMap<>();
 
     @Autowired
@@ -93,6 +108,8 @@ public class ShortTermMemoryService {
         this.props = props;
         this.mapper = mapper;
         this.aiWebClient = aiWebClient;
+        this.unlockScript = org.springframework.data.redis.core.script
+            .RedisScript.of(UNLOCK_SCRIPT, Long.class);
     }
 
     // ====== Key 构造 ======
@@ -107,6 +124,11 @@ public class ShortTermMemoryService {
 
     private static String metaKey(String sid) {
         return PREFIX + sid + ":meta";
+    }
+
+    /** Step 3：压缩分布式锁 key。 */
+    private static String lockKey(String sid) {
+        return LOCK_PREFIX + sid;
     }
 
     private Duration ttl() {
@@ -303,7 +325,7 @@ public class ShortTermMemoryService {
      *   <li>summary 过长 → 走 condenseAsync（仅压 summary）</li>
      *   <li>recent 超阈值 → 走 compressAsync（融合 summary + 淘汰的 recent）</li>
      * </ul>
-     * 两者共用同一锁（{@link #inflightLocks}），不会同时跑。
+     * 两者共用同一 Redis 分布式锁（{@link #lockKey}），不会同时跑（跨实例）。
      */
     @Async("summaryExecutor")
     public CompletableFuture<Void> compressAsync(String sid) {
@@ -322,8 +344,9 @@ public class ShortTermMemoryService {
                 return task;
             }
 
-            // 修复 #3：同 sid 串行化。acquireLock 失败 → 本轮跳过
-            if (!acquireLock(sid)) {
+            // Step 3：Redis 分布式锁。token 用于 releaseLock 的 CAS 校验。
+            String lockToken = acquireLock(sid);
+            if (lockToken == null) {
                 log.debug("STM compressAsync sid={} skipped: another compress in flight", sid);
                 task.complete(null);
                 return task;
@@ -342,7 +365,7 @@ public class ShortTermMemoryService {
                     compressRollingAsync(sid);
                 }
             } finally {
-                releaseLock(sid);
+                releaseLock(sid, lockToken);
             }
             task.complete(null);
         } catch (Exception e) {
@@ -512,27 +535,41 @@ public class ShortTermMemoryService {
         }
     }
 
-    // ====== 并发压缩去重（修复 #3）======
+    // ====== 并发压缩去重（Step 3 改为 Redis 分布式锁）======
 
     /**
-     * 尝试获取 sid 锁。返回 true 表示拿到锁（可执行压缩），false 表示别的 task 正在压缩。
-     * <p>实现：用 AtomicBoolean.compareAndSet，0ms 等待（fire-and-forget 语义）。
-     * 如需可配置等待，调 {@link MemoryProperties#getCompressLockTimeoutMs()}（当前为 0 = 不等待）。
+     * 尝试获取 sid 压缩锁。返回非 null 表示拿到锁（值为随机 UUID，用于 releaseLock 校验所有权）；
+     * 返回 null 表示别的 task / 别的 JVM 正在压缩。
+     * <p>实现：Redis SET NX + TTL（跨实例可靠）。压缩 task 超时会自动释放（TTL=compressLockTtlSeconds）。
+     * <p>不等待（fire-and-forget 语义）：拿不到锁 → 本轮跳过，下轮再触发。
      */
-    private boolean acquireLock(String sid) {
-        AtomicBoolean lock = inflightLocks.computeIfAbsent(sid, k -> new AtomicBoolean(false));
-        boolean got = lock.compareAndSet(false, true);
-        if (!got) {
-            // 当前策略：不等待（props.compressLockTimeoutMs 默认 0）。下轮再触发。
-            return false;
+    private String acquireLock(String sid) {
+        String key = lockKey(sid);
+        String token = UUID.randomUUID().toString();
+        try {
+            Boolean ok = redis.opsForValue()
+                .setIfAbsent(key, token, Duration.ofSeconds(props.getCompressLockTtlSeconds()));
+            if (Boolean.TRUE.equals(ok)) {
+                return token;
+            }
+            return null;
+        } catch (Exception e) {
+            log.debug("STM acquireLock sid={} failed: {}", sid, e.toString());
+            return null;
         }
-        return true;
     }
 
-    private void releaseLock(String sid) {
-        AtomicBoolean lock = inflightLocks.get(sid);
-        if (lock != null) {
-            lock.set(false);
+    /**
+     * 释放 sid 压缩锁。仅当 value 与 token 匹配才 DEL（CAS 保护），
+     * 避免本实例超时后误删别的实例持有的锁。
+     */
+    private void releaseLock(String sid, String token) {
+        if (token == null) return;
+        String key = lockKey(sid);
+        try {
+            redis.execute(unlockScript, List.of(key), token);
+        } catch (Exception e) {
+            log.debug("STM releaseLock sid={} failed (non-fatal): {}", sid, e.toString());
         }
     }
 
@@ -637,13 +674,14 @@ public class ShortTermMemoryService {
         // 修复 #5：先标记关闭，防止压缩 task 在 clear 后写回
         markSidClosed(sid);
         try {
-            redis.delete(List.of(recentKey(sid), summaryKey(sid), metaKey(sid)));
+            // Step 3：顺带删压缩分布式锁（如果当前 sid 还持有锁）
+            redis.delete(List.of(recentKey(sid), summaryKey(sid), metaKey(sid), lockKey(sid)));
             log.debug("STM cleared sid={}", sid);
         } catch (Exception e) {
             log.warn("STM clear failed sid={}: {}", sid, e.toString());
         } finally {
-            // 清掉本机锁，避免内存泄漏
-            inflightLocks.remove(sid);
+            // 清掉本机 task 句柄（避免内存泄漏；分布式锁交由 Redis TTL）
+            inflightTasks.remove(sid);
         }
     }
 
@@ -717,11 +755,6 @@ public class ShortTermMemoryService {
     /** 暴露给测试 / 调试。 */
     public MemoryProperties getProps() {
         return props;
-    }
-
-    /** 暴露给测试 / 调试。 */
-    public ConcurrentHashMap<String, AtomicBoolean> getInflightLocks() {
-        return inflightLocks;
     }
 
     /** 暴露给测试 / 调试。 */

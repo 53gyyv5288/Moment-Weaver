@@ -67,4 +67,11 @@ public class MemoryProperties {
      * 超过则跳过本次压缩（下轮再触发）；0 = 不等待。
      */
     private long compressLockTimeoutMs = 0;
+
+    /**
+     * Redis 分布式锁 TTL（秒）：compress task 应在该时间内完成；超时则自动释放。
+     * <p>Step 3：跨实例部署时压缩锁走 SET NX，比 JVM-local ConcurrentHashMap 更可靠。
+     * <p>默认值 60s：滚动摘要 LLM 调用一般 5-20s，二次压缩 3-10s；60s 留 3x 余量。
+     */
+    private int compressLockTtlSeconds = 60;
 }
