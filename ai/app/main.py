@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import asset, health, interview, narrative, summarize, share_preview, notify, moderation, summarize_rolling
+from app.routers import asset, decide, health, interview, narrative, summarize, share_preview, notify, moderation, summarize_rolling
 from app.rag import embedder as rag_embedder
 from app.rag import milvus_client as rag_milvus
 from app.rag import reranker_client as rag_reranker
@@ -81,6 +81,8 @@ app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])
 app.include_router(moderation.router, prefix="/api/v1/moderation", tags=["moderation"])
 # M6+ RAG（plan §4.1）
 app.include_router(rag_router.router, prefix="/api/v1/rag", tags=["rag"])
+# M9+ Adaptive RAG：检索决策路由器（不调 LLM 时也能工作）
+app.include_router(decide.router, prefix="/api/v1/decide", tags=["decide"])
 
 
 @app.get("/")

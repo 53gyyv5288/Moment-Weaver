@@ -57,6 +57,8 @@ public class InterviewService {
     private final ShortTermMemoryService stmService;
     /** MongoTemplate 用于 atomic update（$push / $set），避免多端并发写入丢消息。 */
     private final MongoTemplate mongoTemplate;
+    /** M9+ Adaptive RAG：让 LLM 判定「是否需要 RAG」。默认走 DEFAULT_RETRIEVE（容错回退）。 */
+    private final AdaptiveRagDecider adaptiveRagDecider;
 
     /**
      * RAG 同步等待的阻塞上限（ms）。略大于 RagProperties.searchSoftTimeoutMs=6000，
@@ -199,10 +201,26 @@ public class InterviewService {
         //    顺序：[system 提示] → [RAG evidence（如有）] → [滚动摘要（如有）] → [recent verbatim]
         List<AiClient.AiMessage> aiMsgs = buildAiMsgs(sessionId, sess, recent);
 
-        // 4) 同步 RAG：阻塞拿到 evidence → 注入 LLM + 推 SSE evidence 事件
-        // 软超时 7s（见 RAG_BLOCK_TIMEOUT_MS）：略大于 searchSoftTimeoutMs=6000 留 1s 余量
-        // 给 AI 服务端到端 + JSON 反序列化；失败 / 超时 / 空 → LLM 照常调（无 evidence 注入）
-        List<RagCacheService.EvidenceItem> ragItems = fetchRagEvidence(userId, sess, userContent);
+        // 4) Adaptive RAG 决策（M9+ Phase 1）：让 LLM 判定「是否需要检索」
+        //    容错语义：decider 异常 → Decision.DEFAULT_RETRIEVE（走原貌，0 风险）
+        //    关闭开关（memory.adaptive-rag.enabled=false）→ DEFAULT_RETRIEVE（保留原行为）
+        AdaptiveRagDecider.Decision deciderResult = adaptiveRagDecider.decide(
+            userContent,
+            stmService.getSummary(sessionId).orElse(""),
+            recent
+        );
+        if (!deciderResult.isNeedRetrieval()) {
+            log.info("Interview session {} adaptive RAG SKIP (rationale={})",
+                sessionId, deciderResult.getRationale());
+            // 不注入 evidence，下游 LLM 照常调（与空 evidence 等价）
+        } else {
+            log.debug("Interview session {} adaptive RAG KEEP (rationale={})",
+                sessionId, deciderResult.getRationale());
+        }
+        List<RagCacheService.EvidenceItem> ragItems = deciderResult.isNeedRetrieval()
+            ? fetchRagEvidence(userId, sess, userContent,
+                deciderResult.getRewrittenQuery())   // 透传 decider 的改写 query
+            : List.of();
         if (!ragItems.isEmpty()) {
             // 推 SSE evidence 事件（controller 拿到时 emitter 必然 active 流未完成 → 中途推）
             if (ragCallback != null) {
@@ -236,7 +254,15 @@ public class InterviewService {
                 }
             })
             .doOnComplete(() -> {
-                String full = accText.toString();
+                String fullRaw = accText.toString();
+                // M9+ Strategy Planner (Phase 1, prompt-only)：
+                // 把 LLM 在回复末尾追加的策略行剥离，存到 InterviewMessage.strategy。
+                // 注意：流式期间策略行也会作为 token 推到前端（极少数情况下用户会看到这一行），
+                // 这是一个可接受的代价，比起「流式切换 state machine」的复杂度更高。
+                // 解析失败 / LLM 未输出策略行 → strategy = null，不影响主流程。
+                String[] splitResult = splitOffStrategyLine(fullRaw);
+                String full = splitResult[0];
+                String strategyFromPrompt = splitResult[1];
                 String thinking = accThink.toString();
                 List<InterviewMessage> appendedThisTurn = new ArrayList<>();
                 appendedThisTurn.add(userMsg); // 本轮 user 也算新增（虽然已在 step2 写入）
@@ -253,6 +279,8 @@ public class InterviewService {
                         .content(full)
                         // 仅在真有思考链内容时落库，避免给老格式文档写一堆空串
                         .thinking(thinking.isEmpty() ? null : thinking)
+                        // M9+ Strategy Planner：把解析到的策略值塞进字段
+                        .strategy(strategyFromPrompt)
                         .turnId(turnId)
                         .turnStatus(InterviewMessage.TurnStatus.COMPLETED)
                         .createdAt(LocalDateTime.now())
@@ -434,14 +462,21 @@ public class InterviewService {
     /**
      * 同步拉 RAG evidence。阻塞上限 RAG_BLOCK_TIMEOUT_MS。
      * <p>失败 / 超时 / 空 → 返回空列表，调用方跳过 evidence 注入，LLM 照常调（无感）。
+     * <p>M9+：接受 {@code rewrittenQuery} 参数（M9+ Adaptive RAG 透传）。
+     * 传 null 或空字符串 → 退回 userContent；非空 → 用改写后的 query 检索。
      */
-    private List<RagCacheService.EvidenceItem> fetchRagEvidence(Long userId, InterviewSession sess, String userContent) {
+    private List<RagCacheService.EvidenceItem> fetchRagEvidence(Long userId, InterviewSession sess,
+                                                                String userContent, String rewrittenQuery) {
         final String subjectId = sess.getSubjectId();
         final String sid = sess.getId();
+        // M9+ Adaptive RAG：透传 LLM 改写的检索词
+        final String effectiveQuery = (rewrittenQuery == null || rewrittenQuery.isBlank())
+            ? userContent
+            : rewrittenQuery;
         try {
             List<EvidenceChunk> chunks = ragClient.searchEvidenceAsync(
                     SearchRequest.SCENARIO_INTERVIEW,
-                    userContent,
+                    effectiveQuery,
                     subjectId,
                     userId
                 )
@@ -449,8 +484,8 @@ public class InterviewService {
             return toEvidenceItems(chunks);
         } catch (Exception e) {
             // 软超时、连接失败、空集合 —— 都视为 RAG 失败
-            log.debug("RAG fetch subject={} sid={} failed (non-fatal): {}",
-                subjectId, sid, e.toString());
+            log.debug("RAG fetch subject={} sid={} query={} failed (non-fatal): {}",
+                subjectId, sid, abbreviate(effectiveQuery, 30), e.toString());
             return List.of();
         }
     }
@@ -658,6 +693,40 @@ public class InterviewService {
         if (cnt == null || cnt == 0) {
             throw new BusinessException(ResultCode.FORBIDDEN, "非工作区成员");
         }
+    }
+
+    private static String abbreviate(String s, int max) {
+        if (s == null) return "";
+        s = s.strip();
+        return s.length() > max ? s.substring(0, max) + "…" : s;
+    }
+
+    /**
+     * M9+ Strategy Planner：剥离 LLM 回复末尾的策略行。
+     * <p>输入可能是完整 assistant 文本（含正文 + 末尾策略行）。
+     * <p>输出：{@code [剥离后的 content, 策略值或 null]}。
+     * <p>LLM 没有输出策略行 / 输出乱码 / 输出在中间 → {@code strategy = null}，原内容不动。
+     * <p>三次 fallback（对应 Phase 1B 决策）：
+     * <ol>
+     *   <li>正则匹配 + 提取 → strategy = 捕获组</li>
+     *   <li>正则不命中 → 解析失败，strategy = null，原文返回</li>
+     * </ol>
+     * <p>用例：被 InterviewService.doOnComplete() 调用，结果进 {@code InterviewMessage.strategy}。
+     */
+    private static final java.util.regex.Pattern STRATEGY_LINE_PATTERN = java.util.regex.Pattern
+        .compile("(?s).*\\u3010next_strategy\\u3011\\s*([a-zA-Z_]+)\\s*$");
+
+    private static String[] splitOffStrategyLine(String full) {
+        if (full == null) return new String[]{"", null};
+        java.util.regex.Matcher m = STRATEGY_LINE_PATTERN.matcher(full);
+        if (m.matches()) {
+            String strategy = m.group(1);
+            // 找到「【」(u3010) 在原文里的位置，截取 marker 之前的内容
+            int markerIdx = full.lastIndexOf('\u3010');
+            String stripped = (markerIdx <= 0) ? "" : full.substring(0, markerIdx).strip();
+            return new String[]{stripped, strategy};
+        }
+        return new String[]{full, null};
     }
 
     private InterviewSessionVO toVO(InterviewSession s) {

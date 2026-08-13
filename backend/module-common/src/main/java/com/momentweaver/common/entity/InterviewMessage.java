@@ -33,6 +33,15 @@ public class InterviewMessage {
     private String thinking;    // 思考链（M5+ 暴露给用户；推理模型 ... 内容；非推理模型为 null）
     private String source;      // human | ai_generated
     private Integer tokenCount; // 估算（前端用不到，后端审计用）
+    /**
+     * M9+ Strategy Planner（prompt-only 实验）：
+     * assistant 消息正文末尾由 LLM 追加一行 {@code 【next_strategy】 xxx}，
+     * 由 InterviewService 解析后填到这里。
+     * 取值：deepen_in_progress | switch_to_gap | clarify | wrap_up | （其他 / null 表示未识别）。
+     * user 消息此字段为 null。
+     * 不进 Mongo 索引（仅为观测与后续统计用）。
+     */
+    private String strategy;
 
     /** 同一对的 user/assistant 共享 turnId；system 消息此字段为 null。 */
     private String turnId;

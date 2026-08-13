@@ -74,4 +74,7 @@ public class MemoryProperties {
      * <p>默认值 60s：滚动摘要 LLM 调用一般 5-20s，二次压缩 3-10s；60s 留 3x 余量。
      */
     private int compressLockTtlSeconds = 60;
+
+    // 注意：Adaptive RAG 配置（M9+ Phase 1）已拆出到 AdaptiveRagProperties，
+    //       prefix = "moment.memory.adaptive-rag"。原因见 AdaptiveRagProperties 类注释。
 }

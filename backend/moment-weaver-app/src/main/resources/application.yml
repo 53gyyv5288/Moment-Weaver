@@ -132,7 +132,13 @@ moment:
       # Step 3：Redis 分布式压缩锁 TTL（秒）。压缩 task 超时会自动释放（兜底防死锁）。
       # 默认 60s：滚动摘要 LLM 5-20s + 二次压缩 3-10s，留 3x 余量。
       compress-lock-ttl-seconds: 60
-
+    # M9+ Adaptive RAG (Phase 1)：让 LLM 判定「是否需要 RAG」。
+    # 默认开启；关闭时 InterviewService 每次都直接调 RAG（改造前行为）。
+    adaptive-rag:
+      enabled: true        # 默认开；如发现 LLM 决策抖动，改 false 走原貌
+      decider-timeout-ms: 3000  # LLM 决策调用 1-3s 是常态，3000ms 覆盖 95% 调用；
+                                # 偶尔超时走 DEFAULT_RETRIEVE（不影响主路径，只是降级到「总是 retrieve」）
+      min-confidence: 0.7      # 决策置信度阈值，仅日志记录
 # 阿里云 OSS（M3 启用）
 aliyun:
   oss:
