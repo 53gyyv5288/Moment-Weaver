@@ -34,6 +34,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -48,6 +49,7 @@ public class InterviewService {
     private final AiClient aiClient;
     private final RagClient ragClient;
     private final ApplicationEventPublisher eventPublisher;
+    private final ShortTermMemoryService stmService;
 
     /**
      * RAG 同步等待的阻塞上限（ms）。略大于 RagProperties.searchSoftTimeoutMs=6000，
@@ -160,11 +162,23 @@ public class InterviewService {
         sess.setLastMessageAt(now);
         sessionRepo.save(sess);
 
-        // 3) 组装要发给 AI 的 messages（先把 user 之前的内容准备好）
-        List<AiClient.AiMessage> aiMsgs = new ArrayList<>();
-        for (InterviewMessage m : sess.getMessages()) {
-            aiMsgs.add(new AiClient.AiMessage(m.getRole(), m.getContent()));
+        // 2.5) STM：把 user 消息推入 Redis recent 列表（用于压缩 + 跨 turn 上下文）
+        //    - 失败不阻塞（消息已在 Mongo，Redis 挂了走 Mongo 全量降级）
+        stmService.appendRecent(sessionId, userMsg);
+        List<InterviewMessage> recent = stmService.getRecent(sessionId);
+        // 回填：Redis 空（服务重启 / 容器迁移 / TTL 过期）→ 从 Mongo 取最近 K 条
+        if (recent.isEmpty() && sess.getMessages() != null && sess.getMessages().size() > 1) {
+            stmService.warmUpFromMongo(sessionId, sess.getMessages());
+            recent = stmService.getRecent(sessionId);
         }
+        if (stmService.shouldCompress(sessionId, recent)) {
+            // fire-and-forget：用 summaryExecutor 跑压缩；失败时旧 summary 保留
+            stmService.compressAsync(sessionId);
+        }
+
+        // 3) 组装要发给 AI 的 messages：从 STM recent + summary 拼装（降级到 Mongo）
+        //    顺序：[system 提示] → [RAG evidence（如有）] → [滚动摘要（如有）] → [recent verbatim]
+        List<AiClient.AiMessage> aiMsgs = buildAiMsgs(sessionId, sess, recent);
 
         // 4) 同步 RAG：阻塞拿到 evidence → 注入 LLM + 推 SSE evidence 事件
         // 软超时 7s（见 RAG_BLOCK_TIMEOUT_MS）：略大于 searchSoftTimeoutMs=6000 留 1s 余量
@@ -179,12 +193,12 @@ public class InterviewService {
                     log.debug("RAG callback sid={} failed: {}", sessionId, e.toString());
                 }
             }
-            // 注入到 aiMsgs：在原 system 之后插入一条 system 消息（保持 user/assistant 历史不变）
+            // 注入到 aiMsgs：插在原 system 之后、summary 之前（保持 STM recent 位置不变）
             String ragText = buildRagSystemMessage(ragItems);
             List<AiClient.AiMessage> augmented = new ArrayList<>(aiMsgs.size() + 1);
-            augmented.add(aiMsgs.get(0));  // 原 system
-            augmented.add(new AiClient.AiMessage("system", ragText));
-            augmented.addAll(aiMsgs.subList(1, aiMsgs.size()));
+            augmented.add(aiMsgs.get(0));  // 原 system（采访官人设）
+            augmented.add(new AiClient.AiMessage("system", ragText));  // RAG evidence
+            augmented.addAll(aiMsgs.subList(1, aiMsgs.size()));  // summary + recent
             aiMsgs = augmented;
             log.info("Interview session {} RAG evidence injected before LLM (n={} items)", sessionId, ragItems.size());
         }
@@ -207,8 +221,9 @@ public class InterviewService {
                 String thinking = accThink.toString();
                 List<InterviewMessage> appendedThisTurn = new ArrayList<>();
                 appendedThisTurn.add(userMsg); // 本轮 user 也算新增（虽然已在 step2 写入）
+                InterviewMessage assistant = null;
                 if (!full.isEmpty()) {
-                    InterviewMessage assistant = InterviewMessage.builder()
+                    assistant = InterviewMessage.builder()
                         .role("assistant")
                         .source("ai_generated")
                         .content(full)
@@ -223,6 +238,12 @@ public class InterviewService {
                 sessionRepo.save(sess);
                 log.info("Interview session {} assistant message saved (text={} chars, thinking={} chars)",
                     sessionId, accText.length(), accThink.length());
+
+                // 2.6) STM：assistant 消息也推入 Redis recent（下轮 verbatim 用）。
+                //      - 不阻塞：失败 log warn；Mongo 已有，Redis 降级下次触发 warmUp。
+                if (assistant != null) {
+                    stmService.appendRecent(sessionId, assistant);
+                }
 
                 // 触发时间线事件（M3 解耦：module-timeline 监听并写库）
                 // 注意：思考链不进时间线预览，避免污染 Timeline 列表。
@@ -261,6 +282,69 @@ public class InterviewService {
             if ("user".equals(m.getRole())) n++;
         }
         return n;
+    }
+
+    /**
+     * 拼装 LLM context messages：从 STM recent + summary 拼装（带降级）。
+     *
+     * <p>顺序：
+     * <ol>
+     *   <li>[system] 采访官人设（来自 sess 的 system message）</li>
+     *   <li>[system] 滚动摘要（如有 STM summary）</li>
+     *   <li>recent verbatim messages（来自 Redis recent，降级用 sess.getMessages()）</li>
+     * </ol>
+     *
+     * <p>RAG evidence 由 streamMessage 步骤 4 在本方法返回后再插入到 [1] 位置，
+     * 保证顺序为：人设 → RAG evidence → 滚动摘要 → recent verbatim。
+     *
+     * <p>降级：recent 为空（Redis 没数据 / Redis 挂）→ 走 Mongo 全量；
+     * 但 Mongo 全量只保留 user/assistant（system 不重复，避免人设叠加）。
+     */
+    private List<AiClient.AiMessage> buildAiMsgs(String sid, InterviewSession sess,
+                                                 List<InterviewMessage> recent) {
+        List<AiClient.AiMessage> msgs = new ArrayList<>();
+
+        // 1) system 人设（取 sess 的第一条 system）
+        String systemHint = null;
+        if (sess.getMessages() != null) {
+            for (InterviewMessage m : sess.getMessages()) {
+                if ("system".equals(m.getRole())) {
+                    systemHint = m.getContent();
+                    break;
+                }
+            }
+        }
+        if (systemHint == null) {
+            // 兜底：极少情况（重连老 session 且 system 不在 messages 里）
+            systemHint = "你是一位温暖、有耐心、尊重长辈的 AI 采访官。";
+        }
+        msgs.add(new AiClient.AiMessage("system", systemHint));
+
+        // 2) 滚动摘要
+        Optional<String> summary = stmService.getSummary(sid);
+        if (summary.isPresent() && !summary.get().isBlank()) {
+            msgs.add(new AiClient.AiMessage("system",
+                "【对话历史摘要】\n" + summary.get()));
+        }
+
+        // 3) recent verbatim（降级：Redis 空 → Mongo 全量但过滤掉 system 避免叠加）
+        List<InterviewMessage> effective = recent;
+        if (effective == null || effective.isEmpty()) {
+            if (sess.getMessages() == null) {
+                return msgs;
+            }
+            List<InterviewMessage> fallback = new ArrayList<>(sess.getMessages().size());
+            for (InterviewMessage m : sess.getMessages()) {
+                if ("system".equals(m.getRole())) continue;  // 已在 [1]
+                fallback.add(m);
+            }
+            effective = fallback;
+            log.debug("STM degraded for sid={}: using mongo fallback ({} msgs)", sid, effective.size());
+        }
+        for (InterviewMessage m : effective) {
+            msgs.add(new AiClient.AiMessage(m.getRole(), m.getContent()));
+        }
+        return msgs;
     }
 
     /**
@@ -363,6 +447,15 @@ public class InterviewService {
         if (saved.getSummary() == null && hasEnoughContent(saved)) {
             summarizeAsync(saved.getId());
         }
+
+        // STM：会话关闭 → 先等正在跑的压缩完成，避免压缩 task 在 clear 后写回导致内存泄漏
+        try {
+            stmService.awaitInflight(sessionId).get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.debug("STM awaitInflight sid={} timeout/error: {}", sessionId, e.toString());
+        }
+        // STM：会话关闭 → 清 Redis 短期记忆（避免悬挂 + 释放内存）
+        stmService.clear(sessionId);
         return toVO(saved);
     }
 

@@ -15,7 +15,7 @@ import reactor.netty.http.client.HttpClient;
 import java.time.Duration;
 
 @Configuration
-@EnableConfigurationProperties(AiProperties.class)
+@EnableConfigurationProperties({AiProperties.class, MemoryProperties.class})
 public class WebClientConfig {
 
     @Bean

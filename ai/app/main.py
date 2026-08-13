@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import asset, health, interview, narrative, summarize, share_preview, notify, moderation
+from app.routers import asset, health, interview, narrative, summarize, share_preview, notify, moderation, summarize_rolling
 from app.rag import embedder as rag_embedder
 from app.rag import milvus_client as rag_milvus
 from app.rag import reranker_client as rag_reranker
@@ -73,6 +73,8 @@ app.include_router(interview.router, prefix="/api/v1/interview", tags=["intervie
 app.include_router(narrative.router, prefix="/api/v1/narrative", tags=["narrative"])
 app.include_router(asset.router, prefix="/api/v1/asset", tags=["asset"])
 app.include_router(summarize.router, prefix="/api/v1/summarize", tags=["summarize"])
+# M7+ STM：滚动摘要端点（短上下文压缩，Java STM 调用）
+app.include_router(summarize_rolling.router, prefix="/api/v1/summarize", tags=["summarize"])
 # M5-A.4: 分享预览 OG / 通知文案 / 内容审核
 app.include_router(share_preview.router, prefix="/api/v1/share-preview", tags=["share-preview"])
 app.include_router(notify.router, prefix="/api/v1/notify", tags=["notify"])

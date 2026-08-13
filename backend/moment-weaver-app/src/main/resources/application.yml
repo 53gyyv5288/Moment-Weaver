@@ -114,6 +114,21 @@ moment:
     # 时通过 X-Internal-Secret 头传；不匹配则 401。
     # 生产必须用环境变量覆盖（dev 默认值仅本地开发用）。
     internal-secret: ${MOMENT_INTERNAL_SECRET:moment-internal-dev-secret-change-me}
+  memory:
+    # 短期记忆（STM）：Redis 滚动摘要 + 最近 K 轮 verbatim
+    # 与 RAG（Milvus 长期记忆）协同：Mongo 权威、Redis 短期、Milvus 跨 session
+    stm:
+      enabled: true
+      recent-turns-keep: 6          # K 生产为20
+      compress-turn-threshold: 5     # 轮数触发 生产20
+      compress-token-threshold: 2000 # token 触发（粗估 len*0.7） 生产12000
+      summary-max-output-tokens: 600 # 摘要 LLM 输出 cap   生产600
+      redis-ttl-minutes: 60         # 滑动 TTL   生产为120
+      # M8+ 新增：空 summary 防御 / 二次压缩触发
+      max-consecutive-empty-summary: 3    # 连续空 N 次跳过   生产3
+      summary-hard-limit-chars: 1500      # summary 字符硬限（超则触发 condense） 生产1500
+      condense-max-output-tokens: 600     # condense LLM 输出 cap（Java 端摘要 cap 略小） 生产600
+      compress-lock-timeout-ms: 0         # 同 sid 并发锁等待（0=不等待，下轮再试）
 
 # 阿里云 OSS（M3 启用）
 aliyun:

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 1024
     # 摘要专用：MiniMax-M3 推理链吃 token 多，全局 1024 不够；summarize.py 单独读这个
     llm_summarize_max_tokens: int = 2048
+    # M7+ STM 滚动摘要专用 cap（summarize_rolling.py）；比 full summary 更小，因为
+    # 滚动摘要要常驻 LLM context 里，太大会反过来吃 context 预算
+    llm_rolling_summary_max_tokens: int = 800
     llm_temperature: float = 0.7
 
     # 历史供应商（保留兼容）
