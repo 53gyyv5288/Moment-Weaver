@@ -103,6 +103,109 @@ def build_summary_messages(
     return msgs
 
 
+# ============ M7+ STM：滚动摘要 ============
+
+ROLLING_SUMMARY_SYSTEM_PROMPT = """你是一个对话历史压缩助手，专做「家族口述史」采访场景的滚动摘要。
+
+【输入】
+- 一段【已有摘要】（可能为空，表示这是首次压缩）
+- 一段【新发生的多轮对话】（即将被从短期记忆淘汰的 K/2 条原文）
+
+【任务】输出整合后的新摘要，保留所有早于「最近 K/2 轮」的关键信息。
+
+【要求】
+1. 保留关键事实：时间、地点、人物、关系、事件
+2. 保留情感标记：受访者的态度、情绪转折、关键回忆
+3. 丢弃套话、追问、引导语、无实质内容的寒暄
+4. 中文输出，约 200-400 字
+5. 不要包含"摘要如下"等开头套话，直接给内容
+6. 不输出 JSON，纯文本即可（下游不解析结构）
+
+【硬约束】
+- 不要输出 <think>...</think> 这类内部推理块
+- 不要使用英文双引号 "" 作为转义或装饰，统一用中文全角标点（「」『』、，。！？）
+- 不要在前后加任何解释、标题、markdown 包裹
+"""
+
+
+def build_rolling_summary_messages(
+    old_summary: str,
+    evicted: list[dict],
+) -> list[dict]:
+    """
+    拼装滚动摘要 prompt：旧摘要 + 即将淘汰的 N 条原文 → 新摘要。
+
+    参数:
+        old_summary: 已有的摘要纯文本；空字符串表示首次压缩
+        evicted: list of {role, content}，即将从 recent 淘汰的 K/2 条
+    """
+    msgs: list[dict] = [{"role": "system", "content": ROLLING_SUMMARY_SYSTEM_PROMPT}]
+
+    user_content_parts: list[str] = []
+    if old_summary and old_summary.strip():
+        user_content_parts.append(f"【已有摘要】\n{old_summary.strip()}\n")
+
+    lines: list[str] = []
+    for m in evicted:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        who = "受访者" if role == "user" else "AI"
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        lines.append(f"{who}：{content}")
+    if lines:
+        user_content_parts.append("【新对话】\n" + "\n".join(lines))
+    else:
+        user_content_parts.append("【新对话】\n（无内容）")
+
+    msgs.append({"role": "user", "content": "\n\n".join(user_content_parts)})
+    return msgs
+
+
+# ============ M8+ STM：summary 二次压缩（condense） ============
+# 当 STM summary 长度超过硬限（默认 1500 字符）时，Java 端会调这个端点
+# 仅压 summary 自身（不再喂新对话），目标是把它缩回 600 字以内。
+
+CONDENSE_SUMMARY_SYSTEM_PROMPT = """你是一个摘要精炼助手，专做「家族口述史」采访场景的滚动摘要二次压缩。
+
+【输入】一段已经压缩过的对话摘要。该摘要因长度膨胀（超过 1500 字符）被触发此任务。
+
+【任务】在不丢失关键信息的前提下，把摘要压缩到约 400-600 字。
+
+【要求】
+1. 保留关键事实：时间、地点、人物、关系、事件
+2. 保留情感标记：受访者的态度、情绪转折、关键回忆
+3. 合并重复信息（同一事件被多次描述时只留最详尽的一条）
+4. 丢弃套话、过渡词、无具体内容的描述
+5. 中文输出，约 400-600 字
+6. 不要包含"摘要如下"等开头套话，直接给内容
+7. 不输出 JSON，纯文本即可
+
+【硬约束】
+- 不要输出 <think>...</think> 这类内部推理块
+- 不要使用英文双引号 "" 作为转义或装饰，统一用中文全角标点（「」『』、，。！？）
+- 不要在前后加任何解释、标题、markdown 包裹
+- 不能添加原摘要里没有的新事实
+"""
+
+
+def build_condense_summary_messages(summary: str) -> list[dict]:
+    """
+    拼装二次压缩 prompt：仅喂当前 summary，让 LLM 把它压短。
+
+    参数:
+        summary: 当前过长的 STM summary 纯文本
+    """
+    msgs: list[dict] = [{"role": "system", "content": CONDENSE_SUMMARY_SYSTEM_PROMPT}]
+    msgs.append({
+        "role": "user",
+        "content": f"请把以下摘要压缩到约 400-600 字：\n\n【当前摘要】\n{summary.strip()}",
+    })
+    return msgs
+
+
 # ============ M4：叙事成稿（人物小传 / 家族小传 / 单章节重写）===========
 
 NARRATIVE_PERSON_SYSTEM = """你是一位擅长写人物小传的编辑，专做「家族口述史」语境下的人物叙事。
