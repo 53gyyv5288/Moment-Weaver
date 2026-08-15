@@ -3,12 +3,28 @@
  * 后端路由：/api/v1/projects/{projectId}/subjects
  */
 import { backend } from './client'
-import type { ApiResult, SubjectVO, CreateSubjectReq, UpdateSubjectReq } from '@/types/api'
+import type {
+  ApiResult,
+  SubjectVO,
+  CreateSubjectReq,
+  UpdateSubjectReq,
+  EligibleFamilyMemberVO,
+} from '@/types/api'
 
-export type { SubjectVO, CreateSubjectReq, UpdateSubjectReq }
+export type { SubjectVO, CreateSubjectReq, UpdateSubjectReq, EligibleFamilyMemberVO }
 
 export function listSubjects(projectId: string | number) {
   return backend.get<ApiResult<SubjectVO[]>>(`/v1/projects/${projectId}/subjects`)
+}
+
+/**
+ * M11 Phase 2：列出项目下"可选被采访者"（从家族成员里筛）。
+ * 个人项目返回空列表。
+ */
+export function listEligibleSubjects(projectId: string | number) {
+  return backend.get<ApiResult<EligibleFamilyMemberVO[]>>(
+    `/v1/projects/${projectId}/subjects/eligible`,
+  )
 }
 
 export function getSubject(projectId: string | number, id: string | number) {

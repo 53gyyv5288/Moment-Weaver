@@ -85,6 +85,11 @@ export interface SubjectVO {
   relation?: string
   hasAccount: number
   linkedUserId?: string
+  /** M11 Phase 2：关联的家族成员 id（NULL=匿名被采访者） */
+  familyMemberId?: string
+  /** 派生：家族成员的展示名（前端显示"采访家人"标签用） */
+  familyMemberDisplayName?: string
+  familyMemberAvatarUrl?: string
   note?: string
   latestAuthStatus?: string
   latestAuthId?: string
@@ -96,6 +101,30 @@ export interface CreateSubjectReq {
   displayName: string
   relation?: string
   note?: string
+  /**
+   * M11 Phase 2：可选的家族成员 id。
+   * 传非空 → 从家族成员里选（个人项目不支持）；
+   * 不传 → 纯匿名被采访者（displayName 必填）
+   */
+  familyMemberId?: string | number | null
+}
+
+/**
+ * M11 Phase 2：项目下"可选被采访者"（从家族成员里筛）。
+ * 用于前端"添加人物"弹窗 Tab 1。
+ */
+export interface EligibleFamilyMemberVO {
+  familyMemberId: string
+  userId?: string
+  displayName: string
+  phone?: string | null
+  email?: string | null
+  avatarUrl?: string | null
+  /** admin / editor / viewer */
+  role: 'admin' | 'editor' | 'viewer'
+  /** true = 已经是本项目的被采访者（重复添加检测） */
+  hasSubject: boolean
+  existingSubjectId?: string
 }
 
 /** 局部更新人物。所有字段都可空；不传 = 不变；显式传 "" = 清空 */

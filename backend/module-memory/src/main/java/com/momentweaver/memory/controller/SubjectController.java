@@ -2,6 +2,7 @@ package com.momentweaver.memory.controller;
 
 import com.momentweaver.account.security.CurrentUser;
 import com.momentweaver.common.Result;
+import com.momentweaver.memory.dto.EligibleFamilyMemberVO;
 import com.momentweaver.memory.dto.SubjectCreateRequest;
 import com.momentweaver.memory.dto.SubjectUpdateRequest;
 import com.momentweaver.memory.dto.SubjectVO;
@@ -33,6 +34,16 @@ public class SubjectController {
     @Operation(summary = "项目的被采访者列表")
     public Result<List<SubjectVO>> list(@PathVariable Long projectId) {
         return Result.ok(subjectService.list(CurrentUser.requireId(), projectId));
+    }
+
+    /**
+     * M11 Phase 2：列出项目下「可选被采访者」（从家族成员筛）。
+     * 前端"添加人物"弹窗 Tab 1 调用此接口；个人项目返回空列表。
+     */
+    @GetMapping("/eligible")
+    @Operation(summary = "可选被采访者（从家族成员筛）")
+    public Result<List<EligibleFamilyMemberVO>> listEligible(@PathVariable Long projectId) {
+        return Result.ok(subjectService.listEligibleFamilyMembers(CurrentUser.requireId(), projectId));
     }
 
     @GetMapping("/{id}")

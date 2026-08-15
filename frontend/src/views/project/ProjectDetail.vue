@@ -1,17 +1,20 @@
 <script setup lang="ts">
 /**
  * 项目详情：M2 阶段承载 Subject 列表 + 授权管理 + 启动采访。
+ * M11 Phase 2：人物可从家族成员里选，或纯匿名（兼容老流程）。
  */
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CopyDocument, Plus, ChatLineRound, Delete, Link, Edit, ArrowDown } from '@element-plus/icons-vue'
+import { CopyDocument, Plus, ChatLineRound, Delete, Link, Edit, ArrowDown, User, UserFilled } from '@element-plus/icons-vue'
 import {
   listSubjects,
+  listEligibleSubjects,
   createSubject,
   updateSubject,
   deleteSubject,
   type SubjectVO,
+  type EligibleFamilyMemberVO,
 } from '@/api/subject'
 import {
   listAuthorizationsByProject,
@@ -32,8 +35,76 @@ const projectId = computed(() => route.params.id as string)
 const subjects = ref<SubjectVO[]>([])
 const authorizations = ref<AuthorizationVO[]>([])
 const loading = ref(false)
-const newSubject = ref({ displayName: '', relation: '', note: '' })
+
+// ============ M11 Phase 2：添加人物（Tab 形式）============
 const showAddSubject = ref(false)
+const addSubjectTab = ref<'family' | 'anonymous'>('family')  // 默认显示「从家族成员选」
+const eligibleMembers = ref<EligibleFamilyMemberVO[]>([])
+const loadingEligible = ref(false)
+const selectedFmId = ref<string | null>(null)  // 选中的 family_member.id
+const anonymousForm = reactive({ displayName: '', relation: '', note: '' })
+// 路径 1 选了家族成员后，留一个 relation 字段（家族成员关系由用户在 relation 里补充）
+const familyMemberRelation = ref('')
+
+async function loadEligible() {
+  if (!showAddSubject.value) return
+  loadingEligible.value = true
+  try {
+    const { data } = await listEligibleSubjects(projectId.value)
+    if (data?.code === 0) eligibleMembers.value = data.data || []
+    else eligibleMembers.value = []
+  } finally {
+    loadingEligible.value = false
+  }
+}
+
+function openAddSubject() {
+  showAddSubject.value = true
+  addSubjectTab.value = eligibleMembers.value.length > 0 ? 'family' : 'anonymous'
+  selectedFmId.value = null
+  familyMemberRelation.value = ''
+  anonymousForm.displayName = ''
+  anonymousForm.relation = ''
+  anonymousForm.note = ''
+  loadEligible()
+}
+
+async function onAddSubject() {
+  if (addSubjectTab.value === 'family') {
+    if (!selectedFmId.value) {
+      ElMessage.warning('请选择一位家族成员')
+      return
+    }
+    const fm = eligibleMembers.value.find((m) => m.familyMemberId === selectedFmId.value)
+    if (fm?.hasSubject) {
+      ElMessage.warning('该成员已被添加为被采访者')
+      return
+    }
+    var payload: any = {
+      familyMemberId: selectedFmId.value,
+      relation: familyMemberRelation.value.trim() || undefined,
+    }
+  } else {
+    if (!anonymousForm.displayName.trim()) {
+      ElMessage.warning('请输入姓名')
+      return
+    }
+    var payload: any = {
+      displayName: anonymousForm.displayName.trim(),
+      relation: anonymousForm.relation.trim() || undefined,
+      note: anonymousForm.note.trim() || undefined,
+    }
+  }
+  const { data } = await createSubject(projectId.value, payload)
+  if (data && data.code === 0) {
+    ElMessage.success('已添加')
+    showAddSubject.value = false
+    await load()
+  } else {
+    ElMessage.error(data?.message || '添加失败')
+  }
+}
+
 // 编辑人物
 const editForm = ref({ displayName: '', relation: '', note: '' })
 const editingSubject = ref<SubjectVO | null>(null)
@@ -64,26 +135,6 @@ async function load() {
 }
 
 onMounted(load)
-
-async function onAddSubject() {
-  if (!newSubject.value.displayName.trim()) {
-    ElMessage.warning('请输入姓名')
-    return
-  }
-  const { data } = await createSubject(projectId.value, {
-    displayName: newSubject.value.displayName.trim(),
-    relation: newSubject.value.relation.trim() || undefined,
-    note: newSubject.value.note.trim() || undefined,
-  })
-  if (data && data.code === 0) {
-    ElMessage.success('已添加')
-    showAddSubject.value = false
-    newSubject.value = { displayName: '', relation: '', note: '' }
-    await load()
-  } else {
-    ElMessage.error(data?.message || '添加失败')
-  }
-}
 
 async function onDeleteSubject(s: SubjectVO) {
   await ElMessageBox.confirm(
@@ -222,13 +273,23 @@ function loadAssets() {
           <span>被采访者 ({{ subjects.length }})</span>
         </template>
         <div class="pd__actions">
-          <el-button type="primary" :icon="Plus" @click="showAddSubject = true">添加人物</el-button>
+          <el-button type="primary" :icon="Plus" @click="openAddSubject">添加人物</el-button>
         </div>
 
         <el-empty v-if="subjects.length === 0" description="还没有人物，先添加一个吧" />
 
         <el-table v-else :data="subjects" stripe>
-          <el-table-column prop="displayName" label="姓名" width="160" />
+          <el-table-column label="姓名" width="200">
+            <template #default="{ row }">
+              <div class="pd__subjName">
+                <el-icon><User /></el-icon>
+                <span>{{ row.displayName }}</span>
+                <el-tag v-if="row.familyMemberId" type="warning" size="small" effect="plain" style="margin-left: 4px">
+                  🏠 家人
+                </el-tag>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column label="关系" width="120">
             <template #default="{ row }">
               <span v-if="row.relation">{{ row.relation }}</span>
@@ -334,19 +395,96 @@ function loadAssets() {
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 添加人物对话框 -->
-    <el-dialog v-model="showAddSubject" title="添加被采访者" width="500px">
-      <el-form label-width="80px">
-        <el-form-item label="姓名" required>
-          <el-input v-model="newSubject.displayName" placeholder="如：父亲 / 王淑芬" />
-        </el-form-item>
-        <el-form-item label="关系">
-          <el-input v-model="newSubject.relation" placeholder="如：父亲、外婆、本人" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="newSubject.note" type="textarea" :rows="2" placeholder="选填，自己看的小抄" />
-        </el-form-item>
-      </el-form>
+    <!-- 添加人物对话框（M11 Phase 2：Tab 形式，支持从家族成员选 / 纯匿名） -->
+    <el-dialog v-model="showAddSubject" title="添加被采访者" width="600px" @open="loadEligible">
+      <el-alert
+        v-if="eligibleMembers.length === 0 && !loadingEligible"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      >
+        <template #title>当前项目无可选家族成员</template>
+        家族管理员可在「家族 → 成员管理」添加成员；或用「匿名添加」模式手动创建。
+      </el-alert>
+
+      <el-tabs v-model="addSubjectTab">
+        <!-- Tab 1：从家族成员选 -->
+        <el-tab-pane :label="`从家族成员选 (${eligibleMembers.length})`" name="family">
+          <template v-if="loadingEligible">
+            <el-skeleton :rows="3" animated />
+          </template>
+          <template v-else-if="eligibleMembers.length > 0">
+            <el-radio-group v-model="selectedFmId" style="width: 100%">
+              <el-table :data="eligibleMembers" stripe @row-click="(row: EligibleFamilyMemberVO) => { if (!row.hasSubject) selectedFmId = row.familyMemberId }">
+                <el-table-column width="50">
+                  <template #default="{ row }">
+                    <el-radio :value="row.familyMemberId" :disabled="row.hasSubject">
+                      <span></span>
+                    </el-radio>
+                  </template>
+                </el-table-column>
+                <el-table-column label="姓名" width="160">
+                  <template #default="{ row }">
+                    <div class="fm__name">
+                      <el-icon><UserFilled /></el-icon>
+                      <span>{{ row.displayName }}</span>
+                      <el-tag v-if="row.hasSubject" type="info" size="small" effect="plain">已添加</el-tag>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="账号" width="200">
+                  <template #default="{ row }">
+                    <span v-if="row.phone">{{ row.phone }}</span>
+                    <span v-else-if="row.email">{{ row.email }}</span>
+                    <span v-else class="muted">—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="角色" width="100">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="(row.role === 'admin' ? 'warning' : row.role === 'viewer' ? 'info' : 'primary') as any">
+                      {{ row.role === 'admin' ? '管理员' : row.role === 'editor' ? '编辑者' : '旁观者' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-radio-group>
+            <el-form label-width="80px" style="margin-top: 16px">
+              <el-form-item label="关系称呼">
+                <el-input
+                  v-model="familyMemberRelation"
+                  placeholder="如：父亲、外婆、本人（选填）"
+                  maxlength="32"
+                />
+              </el-form-item>
+            </el-form>
+            <el-alert type="info" :closable="false" show-icon style="margin-top: 8px">
+              <template #title>采访家人</template>
+              选中的家族成员会作为被采访者，TA 登录后能看到自己的采访内容。
+            </el-alert>
+          </template>
+        </el-tab-pane>
+
+        <!-- Tab 2：纯匿名添加（兼容老流程 / 老人无手机） -->
+        <el-tab-pane label="匿名添加" name="anonymous">
+          <el-form :model="anonymousForm" label-width="80px">
+            <el-form-item label="姓名" required>
+              <el-input v-model="anonymousForm.displayName" placeholder="如：爷爷、外婆" maxlength="64" show-word-limit />
+            </el-form-item>
+            <el-form-item label="关系">
+              <el-input v-model="anonymousForm.relation" placeholder="如：父亲、外婆、本人" maxlength="32" />
+            </el-form-item>
+            <el-form-item label="备注">
+              <el-input v-model="anonymousForm.note" type="textarea" :rows="2" placeholder="选填，自己看的小抄" maxlength="512" show-word-limit />
+            </el-form-item>
+          </el-form>
+          <el-alert type="warning" :closable="false" show-icon>
+            <template #title>匿名被采访者</template>
+            没有账号，授权链接只能通过一次性 token 发给 TA（适合老人无手机的场景）。
+          </el-alert>
+        </el-tab-pane>
+      </el-tabs>
+
       <template #footer>
         <el-button @click="showAddSubject = false">取消</el-button>
         <el-button type="primary" @click="onAddSubject">添加</el-button>
@@ -414,4 +552,6 @@ function loadAssets() {
 .pd { width: 100%; }
 .pd__actions { margin-bottom: 12px; }
 .muted { color: var(--mw-text-muted); }
+.pd__subjName { display: inline-flex; align-items: center; gap: 6px; }
+.fm__name { display: inline-flex; align-items: center; gap: 6px; }
 </style>
