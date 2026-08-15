@@ -20,6 +20,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/auth/Register.vue'),
     meta: { public: true, title: '注册' },
   },
+  // M10+: 强制改密页（必须登录但不需要 Layout）
+  {
+    path: '/change-password',
+    name: 'change-password',
+    component: () => import('@/views/auth/ChangePassword.vue'),
+    meta: { public: true, layout: 'blank', title: '修改密码' },
+  },
   {
     path: '/health-check',
     name: 'health-check',
@@ -133,6 +140,25 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/compliance/ComplianceCenter.vue'),
         meta: { title: '合规中心' },
       },
+      // M10+ Family: 家族
+      {
+        path: 'families',
+        name: 'families',
+        component: () => import('@/views/family/FamilyList.vue'),
+        meta: { title: '家族' },
+      },
+      {
+        path: 'families/new',
+        name: 'family-create',
+        component: () => import('@/views/family/FamilyCreate.vue'),
+        meta: { title: '创建家族' },
+      },
+      {
+        path: 'families/:id',
+        name: 'family-detail',
+        component: () => import('@/views/family/FamilyDetail.vue'),
+        meta: { hideCrumb: true, title: '家族详情' },
+      },
     ],
   },
 
@@ -175,9 +201,19 @@ router.beforeEach((to, _from, next) => {
     document.title = `${to.meta.title} · Moment Weaver`
   }
 
+  // M10+ Family：强制改密拦截
+  // mustChangePassword=true 时，所有非 /change-password / /logout 路由都强制跳改密
+  if (auth.isLoggedIn && auth.user?.mustChangePassword) {
+    if (to.name !== 'change-password' && to.name !== 'login' && to.name !== 'logout') {
+      return next({ name: 'change-password' })
+    }
+  }
+
   if (isPublic) {
     // 已登录用户访问 /login 或 /register 时，直接送到项目列表
     if (auth.isLoggedIn && (to.name === 'login' || to.name === 'register')) {
+      // 但如果是强制改密场景，仍走改密
+      if (auth.user?.mustChangePassword) return next({ name: 'change-password' })
       return next({ name: 'projects' })
     }
     return next()

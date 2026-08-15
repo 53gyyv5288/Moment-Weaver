@@ -1,5 +1,6 @@
 package com.momentweaver.account.controller;
 
+import com.momentweaver.account.dto.ChangePasswordRequest;
 import com.momentweaver.account.dto.LoginRequest;
 import com.momentweaver.account.dto.LoginResponse;
 import com.momentweaver.account.dto.RegisterRequest;
@@ -22,7 +23,7 @@ public class AccountController {
     private final AccountService accountService;
 
     @PostMapping("/register")
-    @Operation(summary = "注册")
+    @Operation(summary = "注册（自注册流程，原样保留）")
     public Result<LoginResponse> register(@Valid @RequestBody RegisterRequest req) {
         return Result.ok(accountService.register(req));
     }
@@ -37,6 +38,13 @@ public class AccountController {
     @Operation(summary = "当前登录用户")
     public Result<UserVO> me() {
         return Result.ok(accountService.me(CurrentUser.requireId()));
+    }
+
+    @PostMapping("/change-password")
+    @Operation(summary = "改密码（同时清除强制改密标记）")
+    public Result<Void> changePassword(@Valid @RequestBody ChangePasswordRequest req) {
+        accountService.changePassword(CurrentUser.requireId(), req);
+        return Result.ok();
     }
 
     @PostMapping("/logout")

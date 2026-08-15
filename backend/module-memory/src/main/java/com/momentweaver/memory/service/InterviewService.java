@@ -2,9 +2,8 @@ package com.momentweaver.memory.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.momentweaver.account.entity.Project;
-import com.momentweaver.account.entity.WorkspaceMember;
 import com.momentweaver.account.mapper.ProjectMapper;
-import com.momentweaver.account.mapper.WorkspaceMemberMapper;
+import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
 import com.momentweaver.common.event.TimelineEventRequest;
@@ -50,7 +49,8 @@ public class InterviewService {
     private final SubjectMapper subjectMapper;
     private final AuthorizationMapper authorizationMapper;
     private final ProjectMapper projectMapper;
-    private final WorkspaceMemberMapper workspaceMemberMapper;
+    /** M10+ ProjectAccessChecker：项目级权限校验（自动区分 workspace / family） */
+    private final ProjectAccessChecker projectAccessChecker;
     private final AiClient aiClient;
     private final RagClient ragClient;
     private final ApplicationEventPublisher eventPublisher;
@@ -81,7 +81,8 @@ public class InterviewService {
     /** 启动一个新采访会话（不立即调 AI）。 */
     public InterviewSessionVO start(Long userId, InterviewStartRequest req) {
         Project p = mustProject(req.getProjectId());
-        ensureMember(p.getWorkspaceId(), userId);
+        // 启动采访需要 editor 权限（family 项目里 viewer 不可；个人项目所有 workspace 成员可）
+        projectAccessChecker.requireEditor(p.getId(), userId);
 
         Subject s = mustSubject(req.getSubjectId());
         if (!s.getProjectId().equals(p.getId())) {
@@ -153,7 +154,7 @@ public class InterviewService {
                                                      RagEmitterCallback ragCallback) {
         InterviewSession sess = mustSession(sessionId);
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(p.getId(), userId);
 
         // 1) 计算 RAG ingest 起始 turn index（在追加 user 消息之前）
         // 这样 chunk_id 是 stable：interview:{sid}:turn_{startTurnIndex}
@@ -535,13 +536,13 @@ public class InterviewService {
     public InterviewSessionVO get(Long userId, String sessionId) {
         InterviewSession sess = mustSession(sessionId);
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(p.getId(), userId);
         return toVO(sess);
     }
 
     public List<InterviewSessionVO> listByProject(Long userId, Long projectId) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(p.getId(), userId);
         return sessionRepo.findByProjectIdOrderByLastMessageAtDesc(String.valueOf(projectId))
             .stream()
             .map(this::toVO)
@@ -582,7 +583,7 @@ public class InterviewService {
     public InterviewSessionVO summarizeNow(Long userId, String sessionId) {
         InterviewSession sess = mustSession(sessionId);
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(p.getId(), userId);
         summarizeSync(sess);
         return toVO(sess);
     }
@@ -682,17 +683,6 @@ public class InterviewService {
         Authorization a = authorizationMapper.selectById(id);
         if (a == null) throw new BusinessException(ResultCode.AUTHORIZATION_NOT_FOUND);
         return a;
-    }
-
-    private void ensureMember(Long workspaceId, Long userId) {
-        Long cnt = workspaceMemberMapper.selectCount(
-            new LambdaQueryWrapper<WorkspaceMember>()
-                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
-                .eq(WorkspaceMember::getUserId, userId)
-        );
-        if (cnt == null || cnt == 0) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "非工作区成员");
-        }
     }
 
     private static String abbreviate(String s, int max) {

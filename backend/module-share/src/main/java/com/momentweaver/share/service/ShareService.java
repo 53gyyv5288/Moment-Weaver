@@ -7,7 +7,7 @@ import com.momentweaver.account.entity.User;
 import com.momentweaver.account.mapper.ProjectMapper;
 import com.momentweaver.account.mapper.UserMapper;
 import com.momentweaver.account.security.CurrentUser;
-import com.momentweaver.account.security.WorkspaceAccessChecker;
+import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
 import com.momentweaver.common.event.NotificationRequest;
@@ -59,7 +59,7 @@ public class ShareService {
     private final NarrativeDraftRepository draftRepository;
     private final ProjectMapper projectMapper;
     private final UserMapper userMapper;
-    private final WorkspaceAccessChecker accessChecker;
+    private final ProjectAccessChecker accessChecker;
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher eventPublisher;
     private final com.momentweaver.share.config.ShareProperties shareProperties;
@@ -72,7 +72,8 @@ public class ShareService {
     @Transactional
     public ShareLinkVO create(Long projectId, CreateShareRequest req) {
         Long userId = CurrentUser.requireId();
-        accessChecker.requireProjectMember(projectId, userId);
+        // M10+ 替代 WorkspaceAccessChecker.requireProjectMember（只查 workspace_member）
+        accessChecker.requireMember(projectId, userId);
 
         // 校验 draft 存在且属于该 project
         NarrativeDraft draft = draftRepository.findById(req.getDraftId())
@@ -136,7 +137,7 @@ public class ShareService {
 
     public List<ShareLinkVO> listByProject(Long projectId) {
         Long userId = CurrentUser.requireId();
-        accessChecker.requireProjectMember(projectId, userId);
+        accessChecker.requireMember(projectId, userId);
         List<ShareLink> links = shareLinkMapper.selectList(new LambdaQueryWrapper<ShareLink>()
             .eq(ShareLink::getProjectId, projectId)
             .orderByDesc(ShareLink::getCreatedAt));
@@ -152,7 +153,8 @@ public class ShareService {
     public void revoke(Long shareId) {
         Long userId = CurrentUser.requireId();
         ShareLink link = mustGet(shareId);
-        accessChecker.requireProjectOwner(link.getProjectId(), userId);
+        // M10+ 替代 requireProjectOwner（只查 workspace_member）
+        accessChecker.requireOwner(link.getProjectId(), userId);
         if (Boolean.TRUE.equals(link.getRevoked())) {
             return; // 幂等
         }

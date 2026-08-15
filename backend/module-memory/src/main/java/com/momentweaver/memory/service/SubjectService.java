@@ -2,9 +2,8 @@ package com.momentweaver.memory.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.momentweaver.account.entity.Project;
-import com.momentweaver.account.entity.WorkspaceMember;
 import com.momentweaver.account.mapper.ProjectMapper;
-import com.momentweaver.account.mapper.WorkspaceMemberMapper;
+import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
 import com.momentweaver.memory.dto.SubjectCreateRequest;
@@ -28,12 +27,12 @@ public class SubjectService {
     private final SubjectMapper subjectMapper;
     private final AuthorizationMapper authorizationMapper;
     private final ProjectMapper projectMapper;
-    private final WorkspaceMemberMapper workspaceMemberMapper;
+    private final ProjectAccessChecker projectAccessChecker;
 
     @Transactional
     public SubjectVO create(Long userId, Long projectId, SubjectCreateRequest req) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(projectId, userId);
 
         Subject s = new Subject();
         s.setProjectId(projectId);
@@ -50,7 +49,7 @@ public class SubjectService {
 
     public List<SubjectVO> list(Long userId, Long projectId) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(projectId, userId);
 
         List<Subject> subjects = subjectMapper.selectList(
             new LambdaQueryWrapper<Subject>()
@@ -72,8 +71,7 @@ public class SubjectService {
 
     public SubjectVO get(Long userId, Long subjectId) {
         Subject s = mustSubject(subjectId);
-        Project p = mustProject(s.getProjectId());
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(s.getProjectId(), userId);
         Authorization latest = authorizationMapper.selectOne(
             new LambdaQueryWrapper<Authorization>()
                 .eq(Authorization::getSubjectId, subjectId)
@@ -85,14 +83,13 @@ public class SubjectService {
 
     /**
      * 局部更新人物。只有请求里出现的字段会被改动；relation/note 显式传 "" 视为清空。
-     * 权限：工作区成员即可（与 create 对齐）。注意：note 字段虽然设计上仅 owner 可见，
+     * 权限：editor 即可（与 create 对齐）。注意：note 字段虽然设计上仅 owner 可见，
      * 但当前 list/get 都会返回给所有成员，权限收紧放在 M3 再做。
      */
     @Transactional
     public SubjectVO update(Long userId, Long subjectId, SubjectUpdateRequest req) {
         Subject s = mustSubject(subjectId);
-        Project p = mustProject(s.getProjectId());
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(s.getProjectId(), userId);
 
         if (req.getDisplayName() != null) {
             s.setDisplayName(req.getDisplayName().trim());
@@ -119,10 +116,8 @@ public class SubjectService {
     @Transactional
     public void delete(Long userId, Long subjectId) {
         Subject s = mustSubject(subjectId);
-        Project p = mustProject(s.getProjectId());
-        if (!p.getOwnerId().equals(userId)) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "仅项目 Owner 可删除人物");
-        }
+        // 删除人物需要项目 owner 权限（家族项目 = family admin）
+        projectAccessChecker.requireOwner(s.getProjectId(), userId);
         subjectMapper.deleteById(subjectId);
     }
 
@@ -138,17 +133,6 @@ public class SubjectService {
         Subject s = subjectMapper.selectById(subjectId);
         if (s == null) throw new BusinessException(ResultCode.SUBJECT_NOT_FOUND);
         return s;
-    }
-
-    private void ensureMember(Long workspaceId, Long userId) {
-        Long cnt = workspaceMemberMapper.selectCount(
-            new LambdaQueryWrapper<WorkspaceMember>()
-                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
-                .eq(WorkspaceMember::getUserId, userId)
-        );
-        if (cnt == null || cnt == 0) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "非工作区成员");
-        }
     }
 
     private SubjectVO toVO(Subject s, Authorization latest) {

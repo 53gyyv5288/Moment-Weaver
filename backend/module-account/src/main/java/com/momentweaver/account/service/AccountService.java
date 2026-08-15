@@ -1,6 +1,7 @@
 package com.momentweaver.account.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.momentweaver.account.dto.ChangePasswordRequest;
 import com.momentweaver.account.dto.LoginRequest;
 import com.momentweaver.account.dto.LoginResponse;
 import com.momentweaver.account.dto.RegisterRequest;
@@ -15,12 +16,14 @@ import com.momentweaver.auth.jwt.JwtTokenProvider;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AccountService {
@@ -45,6 +48,9 @@ public class AccountService {
             ? req.getDisplayName()
             : "用户-" + id.substring(0, Math.min(4, id.length())));
         u.setStatus(1);
+        u.setIsFamilyAdmin(0);
+        u.setMustChangePassword(0);
+        u.setCreatedByUserId(null);  // 自注册
         u.setCreatedAt(LocalDateTime.now());
         u.setUpdatedAt(LocalDateTime.now());
         if (id.contains("@")) {
@@ -90,6 +96,33 @@ public class AccountService {
         return toVO(u);
     }
 
+    /**
+     * 用户改密（含管理员重置后的首次强制改密）。
+     *
+     * <p>副作用：
+     *   <ol>
+     *     <li>校验旧密码</li>
+     *     <li>UPDATE password_hash</li>
+     *     <li>UPDATE must_change_password = 0（如果是强制改密场景）</li>
+     *   </ol>
+     */
+    @Transactional
+    public void changePassword(Long userId, ChangePasswordRequest req) {
+        User u = userMapper.selectById(userId);
+        if (u == null) throw new BusinessException(ResultCode.USER_NOT_FOUND);
+        if (!passwordEncoder.matches(req.getOldPassword(), u.getPasswordHash())) {
+            throw new BusinessException(ResultCode.PASSWORD_INCORRECT, "旧密码错误");
+        }
+        if (req.getOldPassword().equals(req.getNewPassword())) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "新密码不能与旧密码相同");
+        }
+        u.setPasswordHash(passwordEncoder.encode(req.getNewPassword()));
+        u.setMustChangePassword(0);
+        u.setUpdatedAt(LocalDateTime.now());
+        userMapper.updateById(u);
+        log.info("auth.password.changed: userId={}", userId);
+    }
+
     // ---- helpers ----
 
     private LoginResponse issueToken(User u) {
@@ -115,6 +148,8 @@ public class AccountService {
         vo.setEmail(u.getEmail());
         vo.setDisplayName(u.getDisplayName());
         vo.setAvatarUrl(u.getAvatarUrl());
+        vo.setIsFamilyAdmin(u.getIsFamilyAdmin() != null && u.getIsFamilyAdmin() == 1);
+        vo.setMustChangePassword(u.getMustChangePassword() != null && u.getMustChangePassword() == 1);
         return vo;
     }
 }

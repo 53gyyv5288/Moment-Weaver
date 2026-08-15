@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.momentweaver.account.entity.Project;
 import com.momentweaver.account.entity.WorkspaceMember;
 import com.momentweaver.account.mapper.ProjectMapper;
-import com.momentweaver.account.mapper.WorkspaceMemberMapper;
+import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.PageResult;
 import com.momentweaver.common.ResultCode;
@@ -33,7 +33,7 @@ public class TimelineService {
 
     private final TimelineEventRepository repo;
     private final ProjectMapper projectMapper;
-    private final WorkspaceMemberMapper workspaceMemberMapper;
+    private final ProjectAccessChecker projectAccessChecker;
 
     public void record(String projectId, String subjectId, String type,
                        String refId, String title, String preview, Map<String, Object> metadata) {
@@ -59,7 +59,7 @@ public class TimelineService {
                                             LocalDateTime from, LocalDateTime to,
                                             int page, int size) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(projectId, userId);
 
         PageRequest pageable = PageRequest.of(Math.max(0, page - 1), Math.min(Math.max(1, size), 200));
 
@@ -100,14 +100,4 @@ public class TimelineService {
         return p;
     }
 
-    private void ensureMember(Long workspaceId, Long userId) {
-        Long cnt = workspaceMemberMapper.selectCount(
-            new LambdaQueryWrapper<WorkspaceMember>()
-                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
-                .eq(WorkspaceMember::getUserId, userId)
-        );
-        if (cnt == null || cnt == 0) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "非工作区成员");
-        }
-    }
 }

@@ -6,22 +6,37 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, View, Edit } from '@element-plus/icons-vue'
 import { listProjects, deleteProject, updateProject } from '@/api/project'
 import type { ProjectVO } from '@/api/project'
+import { listFamilies, type FamilyVO } from '@/api/family'
 import { formatDateTime } from '@/utils/format'
 
 const router = useRouter()
 const loading = ref(false)
 const projects = ref<ProjectVO[]>([])
+const familyMap = ref<Map<string, FamilyVO>>(new Map())
 
 async function load() {
   loading.value = true
   try {
-    const { data } = await listProjects({ page: 1, size: 50 })
-    if (data && data.code === 0 && data.data) {
-      projects.value = data.data.records
+    const [proj, fam] = await Promise.all([
+      listProjects({ page: 1, size: 50 }),
+      listFamilies(),
+    ])
+    if (proj.data && proj.data.code === 0 && proj.data.data) {
+      projects.value = proj.data.data.records
+    }
+    if (fam.data && fam.data.code === 0) {
+      const m = new Map<string, FamilyVO>()
+      ;(fam.data.data || []).forEach((f) => m.set(String(f.id), f))
+      familyMap.value = m
     }
   } finally {
     loading.value = false
   }
+}
+
+function familyName(p: ProjectVO): FamilyVO | null {
+  if (!p.familyId) return null
+  return familyMap.value.get(String(p.familyId)) || null
 }
 
 async function handleDelete(p: ProjectVO) {
@@ -135,14 +150,27 @@ onMounted(load)
           @click="router.push(`/projects/${p.id}`)"
         >
           <div class="projects__cardHead">
-            <el-tag
-              size="small"
-              round
-              :type="p.type === 'family' ? 'success' : 'info'"
-              effect="light"
-            >
-              {{ typeLabel(p.type) }}
-            </el-tag>
+            <div class="projects__tags">
+              <el-tag
+                size="small"
+                round
+                :type="p.type === 'family' ? 'success' : 'info'"
+                effect="light"
+              >
+                {{ typeLabel(p.type) }}
+              </el-tag>
+              <el-tag
+                v-if="familyName(p)"
+                size="small"
+                round
+                type="warning"
+                effect="plain"
+                @click.stop="router.push(`/families/${familyName(p)!.id}`)"
+              >
+                🏠 {{ familyName(p)!.name }}
+              </el-tag>
+              <el-tag v-else size="small" round effect="plain">个人</el-tag>
+            </div>
             <span class="projects__time">{{ formatDateTime(p.createdAt) }}</span>
           </div>
 
@@ -237,6 +265,12 @@ onMounted(load)
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+.projects__tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .projects__time {
   font-size: 12px;

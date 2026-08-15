@@ -20,4 +20,8 @@ public class ProjectVO {
     private Integer status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    /** M10+ Family：所属家族 ID（NULL=个人项目）。 */
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long familyId;
 }

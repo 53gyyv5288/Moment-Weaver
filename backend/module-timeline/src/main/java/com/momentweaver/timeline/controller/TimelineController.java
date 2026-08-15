@@ -4,8 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.momentweaver.account.entity.Project;
 import com.momentweaver.account.entity.WorkspaceMember;
 import com.momentweaver.account.mapper.ProjectMapper;
-import com.momentweaver.account.mapper.WorkspaceMemberMapper;
 import com.momentweaver.account.security.CurrentUser;
+import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.PageResult;
 import com.momentweaver.common.Result;
@@ -42,7 +42,7 @@ public class TimelineController {
     private final TimelineService timelineService;
     private final RagClient ragClient;
     private final ProjectMapper projectMapper;
-    private final WorkspaceMemberMapper workspaceMemberMapper;
+    private final ProjectAccessChecker projectAccessChecker;
     private final AssetMapper assetMapper;
 
     @GetMapping("/api/v1/projects/{pid}/timeline")
@@ -77,7 +77,7 @@ public class TimelineController {
         @RequestParam(defaultValue = "10") int limit) {
         Long userId = CurrentUser.requireId();
         Project p = mustProject(pid);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(pid, userId);
         if (query == null || query.isBlank()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "q 不能为空");
         }
@@ -160,14 +160,4 @@ public class TimelineController {
         return p;
     }
 
-    private void ensureMember(Long workspaceId, Long userId) {
-        Long cnt = workspaceMemberMapper.selectCount(
-            new LambdaQueryWrapper<WorkspaceMember>()
-                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
-                .eq(WorkspaceMember::getUserId, userId)
-        );
-        if (cnt == null || cnt == 0) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "非工作区成员");
-        }
-    }
 }

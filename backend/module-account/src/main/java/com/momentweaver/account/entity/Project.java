@@ -23,6 +23,13 @@ public class Project {
     private String name;
     private String description;
 
+    /**
+     * 所属家族（NULL=个人项目；非空=家族项目）。
+     * 与 workspaceId 互不冲突：项目可只挂 workspace（如纯个人），
+     * 也可同时挂 family（如家族协作）。
+     */
+    private Long familyId;
+
     /** 0=归档，1=进行中 */
     private Integer status;
 

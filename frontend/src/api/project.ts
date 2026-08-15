@@ -12,6 +12,8 @@ export interface ProjectCreateRequest {
   name: string
   description?: string
   workspaceId?: string // 缺省时使用用户默认工作区
+  /** M10+ Family：可选的家族 ID；不传则创建个人项目 */
+  familyId?: string | number | null
 }
 
 export interface ProjectVO {
@@ -24,6 +26,8 @@ export interface ProjectVO {
   status: number
   createdAt: string
   updatedAt: string
+  /** M10+ Family：所属家族 ID（NULL=个人项目） */
+  familyId?: string | null
 }
 
 export interface ProjectListQuery {

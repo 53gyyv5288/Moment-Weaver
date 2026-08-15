@@ -5,6 +5,7 @@ import com.momentweaver.account.entity.Project;
 import com.momentweaver.account.entity.WorkspaceMember;
 import com.momentweaver.account.mapper.ProjectMapper;
 import com.momentweaver.account.mapper.WorkspaceMemberMapper;
+import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
 import com.momentweaver.common.event.NotificationRequest;
@@ -63,8 +64,13 @@ public class DraftService {
 
     private final NarrativeDraftRepository repo;
     private final ProjectMapper projectMapper;
-    private final WorkspaceMemberMapper workspaceMemberMapper;
+    private final ProjectAccessChecker projectAccessChecker;
+    /** M10+ 用于发布成稿时通知家族成员 */
+    private final com.momentweaver.account.mapper.FamilyMemberMapper familyMemberMapper;
+    /** 个人项目通知用 */
+    private final com.momentweaver.account.mapper.WorkspaceMemberMapper workspaceMemberMapper;
     private final SubjectMapper subjectMapper;
+
     private final InterviewSessionRepository sessionRepo;
     private final AssetMapper assetMapper;
     private final AiNarrativeClient aiNarrativeClient;
@@ -93,7 +99,7 @@ public class DraftService {
     @Transactional
     public NarrativeDraftVO create(Long userId, Long projectId, CreateDraftRequest req) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(projectId, userId);
         validateScope(projectId, req.getSubjectIds(), deriveScope(req.getTemplateId()));
         if (!TemplateSpec.isValid(req.getTemplateId())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "未知模板：" + req.getTemplateId());
@@ -174,7 +180,7 @@ public class DraftService {
     public List<NarrativeDraftVO> list(Long userId, Long projectId, String scope, String status,
                                        int page, int size) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(projectId, userId);
 
         PageRequest pageable = PageRequest.of(Math.max(0, page - 1), Math.min(Math.max(1, size), 200));
         String pidStr = String.valueOf(projectId);
@@ -195,7 +201,7 @@ public class DraftService {
     public NarrativeDraftVO get(Long userId, String draftId) {
         NarrativeDraft d = mustDraft(draftId);
         Project p = mustProject(Long.valueOf(d.getProjectId()));
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(p.getId(), userId);
         return toVO(d);
     }
 
@@ -213,7 +219,7 @@ public class DraftService {
                                           UpdateSectionRequest req, Long ifMatchVersion) {
         NarrativeDraft d = mustDraft(draftId);
         Project p = mustProject(Long.valueOf(d.getProjectId()));
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(p.getId(), userId);
         checkOptimisticLock(d, ifMatchVersion);
 
         if (req.getContent() == null && req.getRewriteStyle() == null) {
@@ -291,7 +297,7 @@ public class DraftService {
     public NarrativeDraftVO generate(Long userId, String draftId) {
         NarrativeDraft d = mustDraft(draftId);
         Project p = mustProject(Long.valueOf(d.getProjectId()));
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(p.getId(), userId);
 
         if ("published".equals(d.getStatus())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "已发布，不可重新生成");
@@ -343,7 +349,7 @@ public class DraftService {
     public NarrativeDraftVO publish(Long userId, String draftId, PublishDraftRequest req) {
         NarrativeDraft d = mustDraft(draftId);
         Project p = mustProject(Long.valueOf(d.getProjectId()));
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(p.getId(), userId);
 
         if ("published".equals(d.getStatus())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "已是发布状态");
@@ -383,33 +389,60 @@ public class DraftService {
             meta
         ));
 
-        // 发通知给工作区其他成员（不发给自己，避免噪音）
-        notifyWorkspaceMembers(p.getWorkspaceId(), userId, d, draftId, meta);
+        // 发通知给项目其他成员（不发给自己，避免噪音）
+        // M10+ Family：家族项目通知家族成员；个人项目通知工作区成员
+        notifyProjectMembers(p, userId, d, draftId, meta);
 
         return toVO(d);
     }
 
-    private void notifyWorkspaceMembers(Long workspaceId, Long publisherId,
-                                        NarrativeDraft d, String draftId,
-                                        Map<String, Object> meta) {
-        if (workspaceId == null) return;
-        List<WorkspaceMember> members = workspaceMemberMapper.selectList(
-            new LambdaQueryWrapper<WorkspaceMember>().eq(WorkspaceMember::getWorkspaceId, workspaceId)
-        );
+    /**
+     * M10+ 通知所有能看到该项目的成员。
+     * 个人项目 → workspace_member；家族项目 → family_member。
+     */
+    private void notifyProjectMembers(Project p, Long publisherId,
+                                      NarrativeDraft d, String draftId,
+                                      Map<String, Object> meta) {
         String title = d.getTitle() == null ? "未命名" : d.getTitle();
         String body = String.format("《%s》已发布，可阅读 / 分享", title);
-        for (WorkspaceMember m : members) {
-            Long memberId = m.getUserId();
-            if (memberId == null || memberId.equals(publisherId)) continue;
-            eventPublisher.publishEvent(new NotificationRequest(
-                memberId,
-                NotificationTypes.DRAFT_PUBLISHED,
-                "成稿已发布",
-                body,
-                draftId,
-                "/drafts/" + draftId + "/read",
-                meta
-            ));
+        String deepLink = "/drafts/" + draftId + "/read";
+
+        if (p.getFamilyId() != null) {
+            // 家族项目：通知家族成员
+            List<com.momentweaver.account.entity.FamilyMember> members = familyMemberMapper.selectList(
+                new LambdaQueryWrapper<com.momentweaver.account.entity.FamilyMember>()
+                    .eq(com.momentweaver.account.entity.FamilyMember::getFamilyId, p.getFamilyId())
+            );
+            for (com.momentweaver.account.entity.FamilyMember m : members) {
+                if (m.getUserId() == null || m.getUserId().equals(publisherId)) continue;
+                eventPublisher.publishEvent(new NotificationRequest(
+                    m.getUserId(),
+                    NotificationTypes.DRAFT_PUBLISHED,
+                    "成稿已发布",
+                    body,
+                    draftId,
+                    deepLink,
+                    meta
+                ));
+            }
+        } else {
+            // 个人项目：通知工作区成员
+            if (p.getWorkspaceId() == null) return;
+            List<WorkspaceMember> members = workspaceMemberMapper.selectList(
+                new LambdaQueryWrapper<WorkspaceMember>().eq(WorkspaceMember::getWorkspaceId, p.getWorkspaceId())
+            );
+            for (WorkspaceMember m : members) {
+                if (m.getUserId() == null || m.getUserId().equals(publisherId)) continue;
+                eventPublisher.publishEvent(new NotificationRequest(
+                    m.getUserId(),
+                    NotificationTypes.DRAFT_PUBLISHED,
+                    "成稿已发布",
+                    body,
+                    draftId,
+                    deepLink,
+                    meta
+                ));
+            }
         }
     }
 
@@ -730,17 +763,6 @@ public class DraftService {
         Project p = projectMapper.selectById(projectId);
         if (p == null) throw new BusinessException(ResultCode.PROJECT_NOT_FOUND);
         return p;
-    }
-
-    private void ensureMember(Long workspaceId, Long userId) {
-        Long cnt = workspaceMemberMapper.selectCount(
-            new LambdaQueryWrapper<WorkspaceMember>()
-                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
-                .eq(WorkspaceMember::getUserId, userId)
-        );
-        if (cnt == null || cnt == 0) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "非工作区成员");
-        }
     }
 
     private Subject mustSubjectInProject(Long subjectId, Long projectId) {

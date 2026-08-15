@@ -2,9 +2,8 @@ package com.momentweaver.memory.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.momentweaver.account.entity.Project;
-import com.momentweaver.account.entity.WorkspaceMember;
 import com.momentweaver.account.mapper.ProjectMapper;
-import com.momentweaver.account.mapper.WorkspaceMemberMapper;
+import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
 import com.momentweaver.common.event.AuthorizationRevokedEvent;
@@ -38,7 +37,7 @@ public class AuthorizationService {
     private final AuthorizationMapper authorizationMapper;
     private final SubjectMapper subjectMapper;
     private final ProjectMapper projectMapper;
-    private final WorkspaceMemberMapper workspaceMemberMapper;
+    private final ProjectAccessChecker projectAccessChecker;
     private final ApplicationEventPublisher eventPublisher;
 
     @Value("${moment.consent.current-version}")
@@ -53,9 +52,8 @@ public class AuthorizationService {
     @Transactional
     public AuthorizationVO create(Long userId, Long projectId, AuthorizationCreateRequest req) {
         Project p = mustProject(projectId);
-        if (!p.getOwnerId().equals(userId)) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "仅项目 Owner 可发起授权");
-        }
+        // 家族项目：admin 可发起；个人项目：owner 可发起
+        projectAccessChecker.requireOwner(projectId, userId);
         Subject s = mustSubject(req.getSubjectId());
         if (!s.getProjectId().equals(projectId)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "人物不属于该项目");
@@ -109,7 +107,7 @@ public class AuthorizationService {
 
     public List<AuthorizationVO> listByProject(Long userId, Long projectId) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(projectId, userId);
 
         List<Authorization> all = authorizationMapper.selectList(
             new LambdaQueryWrapper<Authorization>()
@@ -121,8 +119,7 @@ public class AuthorizationService {
 
     public List<AuthorizationVO> listBySubject(Long userId, Long subjectId) {
         Subject s = mustSubject(subjectId);
-        Project p = mustProject(s.getProjectId());
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(s.getProjectId(), userId);
 
         List<Authorization> all = authorizationMapper.selectList(
             new LambdaQueryWrapper<Authorization>()
@@ -135,10 +132,8 @@ public class AuthorizationService {
     @Transactional
     public void revoke(Long userId, Long authorizationId) {
         Authorization a = mustAuth(authorizationId);
-        Project p = mustProject(a.getProjectId());
-        if (!p.getOwnerId().equals(userId)) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "仅项目 Owner 可撤销授权");
-        }
+        // 家族项目：admin 可撤销；个人项目：owner 可撤销
+        projectAccessChecker.requireOwner(a.getProjectId(), userId);
         if ("granted".equals(a.getStatus())) {
             // 撤销已授权的，要审计：保留记录
             a.setStatus("revoked");
@@ -155,12 +150,14 @@ public class AuthorizationService {
         }
 
         // M5-B.2: 发布撤回事件，让 timeline / share / notification 模块各自级联
+        Project ownerOfProject = mustProject(a.getProjectId());
+        Long projectOwnerId = ownerOfProject.getOwnerId();
         String subjectDisplayName = resolveSubjectDisplayName(a.getSubjectId());
         eventPublisher.publishEvent(new AuthorizationRevokedEvent(
             userId,
             a.getId(),
             a.getProjectId(),
-            p.getOwnerId(),
+            projectOwnerId,
             String.valueOf(a.getSubjectId()),
             subjectDisplayName,
             "Owner 主动撤销"
@@ -256,17 +253,6 @@ public class AuthorizationService {
         Authorization a = authorizationMapper.selectById(id);
         if (a == null) throw new BusinessException(ResultCode.AUTHORIZATION_NOT_FOUND);
         return a;
-    }
-
-    private void ensureMember(Long workspaceId, Long userId) {
-        Long cnt = workspaceMemberMapper.selectCount(
-            new LambdaQueryWrapper<WorkspaceMember>()
-                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
-                .eq(WorkspaceMember::getUserId, userId)
-        );
-        if (cnt == null || cnt == 0) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "非工作区成员");
-        }
     }
 
     public AuthorizationVO toVO(Authorization a, String publicUrl) {

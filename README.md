@@ -2,6 +2,23 @@
 
 > AI 引导式故事采集与生成平台 · 瘦版 MVP（单人 + Vibe Coding）
 
+## ✨ 最新：M10+ 家族组织（Family Phase 1）
+
+详见 [`docs/FAMILY_USAGE.md`](docs/FAMILY_USAGE.md)
+
+**新增能力**：
+- 👨‍👩‍👧 **家族组织**：多成员协作容器，与个人 workspace 并行存在
+- 🔑 **家族管理员**：可创建家族、邀请家人、创建成员账号（无需家人注册）
+- 👥 **3 种角色**：admin / editor / viewer，权限差异化
+- 🔒 **强制改密**：管理员创建的账号首次登录必须改密
+- 📦 **项目双重归属**：项目可属于个人 workspace 或家族
+- ✅ **完全向后兼容**：原有自注册流程、个人项目、一次性 token 授权全部不变
+
+**端到端验证脚本**：
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/e2e-family.ps1
+```
+
 ## 项目结构
 
 ```
@@ -11,8 +28,8 @@ moment-weaver/
 ├── frontend/               # Vue 3 + Vite + Element Plus + Vant
 ├── db/init/                # MySQL 初始 schema
 ├── deploy/                 # 生产部署（docker-compose，**仅 ECS 使用**）
-├── docs/                   # PRD + DevelopmentPlan
-└── scripts/                # 环境检查 + 启动脚本
+├── docs/                   # PRD + DevelopmentPlan + FAMILY_USAGE
+└── scripts/                # 环境检查 + 启动脚本 + e2e 验证
 ```
 
 ## 本地开发环境前置

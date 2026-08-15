@@ -12,10 +12,12 @@ const router = useRouter()
 const route = useRoute()
 
 // 顶栏只承载全局导航；项目级入口（时间线 / 成稿 / 分享）由 ProjectLayout 提供。
-// 停留在项目子页时，顶栏仍高亮「我的项目」。
-const activeMenu = computed(() =>
-  route.path.startsWith('/projects') ? '/projects' : route.path,
-)
+// 停留在项目子页时，顶栏仍高亮「我的项目」；停留在家族子页时高亮「家族」。
+const activeMenu = computed(() => {
+  if (route.path.startsWith('/projects')) return '/projects'
+  if (route.path.startsWith('/families')) return '/families'
+  return route.path
+})
 
 // 面包屑：项目子页由 ProjectLayout 自带「← 我的项目 + 项目名」页头，
 // 这里不再重复（meta.hideCrumb 由 projects/:id 父路由下发，子路由自动继承）。
@@ -65,12 +67,16 @@ onUnmounted(() => {
         class="layout__menu"
       >
         <el-menu-item index="/projects">我的项目</el-menu-item>
+        <el-menu-item index="/families">家族</el-menu-item>
         <el-menu-item index="/notifications">通知</el-menu-item>
         <el-menu-item index="/compliance">合规</el-menu-item>
       </el-menu>
       <div class="layout__user">
         <NotificationBell class="layout__bell" />
-        <span class="layout__name">{{ auth.user?.displayName || '未登录' }}</span>
+        <span class="layout__name">
+          {{ auth.user?.displayName || '未登录' }}
+          <el-tag v-if="auth.user?.isFamilyAdmin" type="warning" size="small" effect="plain" style="margin-left: 6px">管理员</el-tag>
+        </span>
         <el-button text @click="handleLogout">退出</el-button>
       </div>
     </el-header>

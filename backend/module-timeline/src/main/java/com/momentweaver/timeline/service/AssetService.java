@@ -2,9 +2,8 @@ package com.momentweaver.timeline.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.momentweaver.account.entity.Project;
-import com.momentweaver.account.entity.WorkspaceMember;
 import com.momentweaver.account.mapper.ProjectMapper;
-import com.momentweaver.account.mapper.WorkspaceMemberMapper;
+import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
 import com.momentweaver.common.event.TimelineEventRequest;
@@ -49,6 +48,8 @@ import java.util.UUID;
  * </ul>
  *
  * <p>URL 拼装统一在 {@link #buildUrl}：永远返回前端能直接用的字符串。
+ *
+ * <p>M10+ 项目级权限：自动区分 workspace 项目 / family 项目。
  */
 @Slf4j
 @Service
@@ -57,7 +58,8 @@ public class AssetService {
 
     private final AssetMapper assetMapper;
     private final ProjectMapper projectMapper;
-    private final WorkspaceMemberMapper workspaceMemberMapper;
+    /** M10+ 替代旧的 WorkspaceMemberMapper；自动按项目归属校验 */
+    private final ProjectAccessChecker projectAccessChecker;
     private final SubjectMapper subjectMapper;
     private final OssProperties ossProps;
     private final LocalStorageProperties localProps;
@@ -67,7 +69,7 @@ public class AssetService {
     @Transactional
     public AssetVO registerAfterUpload(Long userId, Long projectId, AssetCreateRequest req) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(projectId, userId);
         if (req.getSubjectId() != null) mustSubjectInProject(req.getSubjectId(), projectId);
 
         Asset a = new Asset();
@@ -108,7 +110,7 @@ public class AssetService {
     public AssetVO uploadMultipart(Long userId, Long projectId, MultipartFile file,
                                    Long subjectId, String interviewId, String caption) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireEditor(projectId, userId);
         if (subjectId != null) mustSubjectInProject(subjectId, projectId);
 
         if (file == null || file.isEmpty()) {
@@ -223,7 +225,7 @@ public class AssetService {
     public List<AssetVO> listByProject(Long userId, Long projectId, Long subjectId,
                                        String kind, LocalDateTime from, LocalDateTime to) {
         Project p = mustProject(projectId);
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(projectId, userId);
 
         LambdaQueryWrapper<Asset> q = new LambdaQueryWrapper<Asset>()
             .eq(Asset::getProjectId, projectId)
@@ -238,7 +240,7 @@ public class AssetService {
     public List<AssetVO> listBySubject(Long userId, Long subjectId) {
         Subject s = mustSubject(subjectId);
         Project p = mustProject(s.getProjectId());
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(p.getId(), userId);
 
         return assetMapper.selectList(
             new LambdaQueryWrapper<Asset>()
@@ -250,7 +252,7 @@ public class AssetService {
     public AssetVO get(Long userId, Long assetId) {
         Asset a = mustAsset(assetId);
         Project p = mustProject(a.getProjectId());
-        ensureMember(p.getWorkspaceId(), userId);
+        projectAccessChecker.requireMember(p.getId(), userId);
         return toVO(a);
     }
 
@@ -363,17 +365,6 @@ public class AssetService {
         Subject s = mustSubject(subjectId);
         if (!s.getProjectId().equals(projectId)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "人物不属于该项目");
-        }
-    }
-
-    private void ensureMember(Long workspaceId, Long userId) {
-        Long cnt = workspaceMemberMapper.selectCount(
-            new LambdaQueryWrapper<WorkspaceMember>()
-                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
-                .eq(WorkspaceMember::getUserId, userId)
-        );
-        if (cnt == null || cnt == 0) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "非工作区成员");
         }
     }
 

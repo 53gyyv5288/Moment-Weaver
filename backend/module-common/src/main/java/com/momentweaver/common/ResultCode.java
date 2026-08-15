@@ -67,6 +67,12 @@ public enum ResultCode {
     PDF_GENERATION_FAILED(3070, "PDF 生成失败"),
     PDF_DRAFT_NOT_PUBLISHED(3071, "成稿未发布，无法导出 PDF"),
     PDF_FONT_NOT_FOUND(3072, "PDF 中文字体缺失"),
+    // M10+: 家族
+    FAMILY_NOT_FOUND(3080, "家族不存在"),
+    FAMILY_ALREADY_MEMBER(3081, "该用户已是家族成员"),
+    FAMILY_NOT_MEMBER(3082, "非家族成员"),
+    FAMILY_ONLY_ADMIN(3083, "仅家族管理员可执行此操作"),
+    FAMILY_VIEWER_READONLY(3084, "viewer 只读，不可编辑"),
 
     // 5xxx AI
     AI_UPSTREAM_ERROR(5001, "AI 服务异常"),

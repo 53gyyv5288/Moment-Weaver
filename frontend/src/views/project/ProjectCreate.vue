@@ -1,18 +1,37 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { createProject } from '@/api/project'
 import type { ProjectType } from '@/api/project'
+import { listFamilies, type FamilyVO } from '@/api/family'
 
 const router = useRouter()
+const route = useRoute()
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
 
-const form = reactive<{ type: ProjectType; name: string; description: string }>({
+interface ProjectCreateForm {
+  type: ProjectType
+  name: string
+  description: string
+  /** '' 表示个人项目（挂个人 workspace）；其他值是 family.id 字符串 */
+  familyId: string | number
+}
+
+const PERSONAL_SCOPE = '' as const
+
+const form = reactive<ProjectCreateForm>({
   type: 'family',
   name: '',
   description: '',
+  familyId: PERSONAL_SCOPE,
+})
+
+const families = ref<FamilyVO[]>([])
+const eligibleFamilies = computed(() => {
+  // 只有 admin/editor 能创建家族项目（viewer 不可见创建入口；后端会兜底校验）
+  return families.value.filter((f) => f.myRole === 'admin' || f.myRole === 'editor')
 })
 
 const rules: FormRules = {
@@ -22,6 +41,16 @@ const rules: FormRules = {
     { min: 1, max: 128, message: '1-128 字', trigger: 'blur' },
   ],
   description: [{ max: 512, message: '最多 512 字', trigger: 'blur' }],
+}
+
+async function loadFamilies() {
+  const { data } = await listFamilies()
+  if (data?.code === 0) families.value = data.data || []
+  // 如果 URL 带 familyId query，自动选中（从家族详情页跳过来的场景）
+  const qFamilyId = route.query.familyId as string | undefined
+  if (qFamilyId) {
+    form.familyId = qFamilyId
+  }
 }
 
 async function onSubmit() {
@@ -34,15 +63,23 @@ async function onSubmit() {
       type: form.type,
       name: form.name.trim(),
       description: form.description.trim() || undefined,
+      familyId: form.familyId === PERSONAL_SCOPE ? null : form.familyId,
     })
     if (data && data.code === 0) {
-      ElMessage.success('项目已创建（M2 阶段可进入详情）')
-      router.replace('/projects')
+      ElMessage.success('项目已创建')
+      // 如果是从家族详情来的，跳回家族详情；否则跳项目列表
+      if (form.familyId && form.familyId !== PERSONAL_SCOPE) {
+        router.replace(`/families/${form.familyId}`)
+      } else {
+        router.replace('/projects')
+      }
     }
   } finally {
     submitting.value = false
   }
 }
+
+onMounted(loadFamilies)
 </script>
 
 <template>
@@ -53,17 +90,43 @@ async function onSubmit() {
       </template>
 
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+        <el-form-item label="所属范围" prop="familyId">
+          <el-radio-group v-model="form.familyId">
+            <el-radio-button :value="PERSONAL_SCOPE">个人项目</el-radio-button>
+            <el-radio-button
+              v-for="f in eligibleFamilies"
+              :key="f.id"
+              :value="f.id"
+            >
+              {{ f.name }}
+            </el-radio-button>
+          </el-radio-group>
+          <div class="form__hint">
+            <template v-if="form.familyId !== PERSONAL_SCOPE">
+              <strong style="color: #d97706">家族项目：</strong>
+              所有家族成员都能查看，{{ form.type === 'family' ? '可用于家族小传成稿' : '仅做个人时光胶囊' }}
+            </template>
+            <template v-else>
+              <strong>个人项目：</strong>只有您自己能看到（个人 workspace 下）
+            </template>
+          </div>
+          <div v-if="families.length === 0" class="form__hint">
+            您还没有加入任何家族。
+            <el-link type="primary" @click="router.push('/families/new')">立即创建一个</el-link>
+          </div>
+        </el-form-item>
+
         <el-form-item label="项目类型" prop="type">
           <el-radio-group v-model="form.type">
-            <el-radio-button value="family">家族</el-radio-button>
-            <el-radio-button value="personal">个人</el-radio-button>
+            <el-radio-button value="family">家族小传</el-radio-button>
+            <el-radio-button value="personal">个人小传</el-radio-button>
           </el-radio-group>
           <div class="form__hint">
             <template v-if="form.type === 'family'">
-              家族项目：可录入多位被采访者，后续需邀请他们授权（M2）。
+              可录入多位被采访者，适合多人协作；模板生成「家族小传」。
             </template>
             <template v-else>
-              个人项目：时光胶囊，只录入自己。
+              仅录入自己；模板生成「人物小传」。
             </template>
           </div>
         </el-form-item>
@@ -89,12 +152,6 @@ async function onSubmit() {
         </el-form-item>
       </el-form>
     </el-card>
-
-    <el-alert class="create__hint" type="info" :closable="false" show-icon>
-      <template #title>关于授权</template>
-      <p>M1 创建项目后不需要立刻邀请被采访者。</p>
-      <p>M2 阶段在「项目详情 → 人物」中录入被采访者，并生成授权链接 / 二维码。被采访者点击后须先阅读知情同意书并同意，AI 才会向其提问。</p>
-    </el-alert>
   </div>
 </template>
 
@@ -102,12 +159,6 @@ async function onSubmit() {
 .create {
   max-width: 720px;
   margin: 0 auto;
-}
-.create__hint {
-  margin-top: 16px;
-}
-.create__hint p {
-  margin: 4px 0;
 }
 .form__hint {
   margin-top: 6px;

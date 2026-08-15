@@ -31,6 +31,15 @@ export interface UserVO {
   avatarUrl: string | null
   status: number
   createdAt: string
+  /** M10+ Family：是否家族管理员 */
+  isFamilyAdmin?: boolean
+  /** M10+ Family：是否需要强制改密 */
+  mustChangePassword?: boolean
+}
+
+export interface ChangePasswordRequest {
+  oldPassword: string
+  newPassword: string
 }
 
 export function register(data: RegisterRequest) {
@@ -47,4 +56,8 @@ export function me() {
 
 export function logout() {
   return backend.post<ApiResult<null>>('/v1/auth/logout')
+}
+
+export function changePassword(data: ChangePasswordRequest) {
+  return backend.post<ApiResult<null>>('/v1/auth/change-password', data)
 }
