@@ -34,6 +34,12 @@ public final class NotificationTypes {
     /** 授权被撤回，draft 章节受影响（发到 project owner）。 */
     public static final String AUTHORIZATION_REVOKED = "AUTHORIZATION_REVOKED";
 
+    /** M11 Phase 2：授权请求已发送给被采访者（发到 subject.linkedUserId）。deepLink = /authz/{token}，一键直达同意页。 */
+    public static final String AUTHORIZATION_REQUESTED = "AUTHORIZATION_REQUESTED";
+
+    /** M11 Phase 2：被采访者已同意授权（发到 project owner / 发起授权的人）。 */
+    public static final String AUTHORIZATION_GRANTED = "AUTHORIZATION_GRANTED";
+
     /** 默认类型（兜底，理论上不该出现）。 */
     public static final String UNKNOWN = "UNKNOWN";
 }

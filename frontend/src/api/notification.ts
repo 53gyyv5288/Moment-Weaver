@@ -14,6 +14,8 @@ export type NotificationType =
   | 'EXPORT_READY'
   | 'DELETION_EXECUTED'
   | 'AUTHORIZATION_REVOKED'
+  | 'AUTHORIZATION_REQUESTED'   // M11 Phase 2：被采访者收到授权邀请
+  | 'AUTHORIZATION_GRANTED'     // M11 Phase 2：采访官收到"已同意"回执
   | 'UNKNOWN'
   | string
 
@@ -36,7 +38,7 @@ export interface UnreadCount {
 
 /** 通知列表（unreadOnly=true 只查未读） */
 export function listNotifications(
-  page = 0,
+  page = 1,
   size = 20,
   unreadOnly = false,
 ) {
@@ -64,13 +66,15 @@ export function markAllRead() {
 
 /** 通知类型 → 视觉映射（图标 / 颜色） */
 export const NOTIFICATION_VISUAL: Record<string, { icon: string; type: 'info' | 'success' | 'warning' | 'danger' | '' }> = {
-  DRAFT_PUBLISHED:    { icon: '📄', type: 'success' },
-  SHARE_CREATED:      { icon: '🔗', type: 'info' },
-  SHARE_ACCESSED:     { icon: '👁', type: 'info' },
-  SHARE_REVOKED:      { icon: '🚫', type: 'warning' },
-  SHARE_EXPIRED:      { icon: '⏰', type: 'warning' },
-  EXPORT_READY:       { icon: '📦', type: 'success' },
-  DELETION_EXECUTED:  { icon: '🗑', type: 'danger' },
+  DRAFT_PUBLISHED:       { icon: '📄', type: 'success' },
+  SHARE_CREATED:         { icon: '🔗', type: 'info' },
+  SHARE_ACCESSED:        { icon: '👁', type: 'info' },
+  SHARE_REVOKED:         { icon: '🚫', type: 'warning' },
+  SHARE_EXPIRED:         { icon: '⏰', type: 'warning' },
+  EXPORT_READY:          { icon: '📦', type: 'success' },
+  DELETION_EXECUTED:     { icon: '🗑', type: 'danger' },
   AUTHORIZATION_REVOKED: { icon: '⚠', type: 'warning' },
-  UNKNOWN:            { icon: '🔔', type: '' },
+  AUTHORIZATION_REQUESTED: { icon: '📩', type: 'info' },
+  AUTHORIZATION_GRANTED:   { icon: '✅', type: 'success' },
+  UNKNOWN:               { icon: '🔔', type: '' },
 }

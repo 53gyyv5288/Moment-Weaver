@@ -1,12 +1,12 @@
 package com.momentweaver.notification.controller;
 
 import com.momentweaver.account.security.CurrentUser;
+import com.momentweaver.common.PageResult;
 import com.momentweaver.common.Result;
 import com.momentweaver.common.ResultCode;
 import com.momentweaver.notification.dto.NotificationVO;
 import com.momentweaver.notification.service.NotificationService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -23,9 +23,13 @@ public class NotificationController {
 
     private final NotificationService service;
 
+    /**
+     * 列表：返回统一 PageResult（与其他模块一致），前端拿 records / total。
+     * 修复前：曾直接返回 Spring Page，序列化是 content/totalElements，与前端类型不匹配 → 列表一直显示空。
+     */
     @GetMapping
-    public Result<Page<NotificationVO>> list(
-        @RequestParam(defaultValue = "0") int page,
+    public Result<PageResult<NotificationVO>> list(
+        @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "20") int size,
         @RequestParam(defaultValue = "false") boolean unreadOnly
     ) {

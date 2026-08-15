@@ -26,7 +26,7 @@ export const useNotificationStore = defineStore('notification', {
     loading: false,
     loadingList: false,
     total: 0,
-    page: 0,
+    page: 1,  // 1-based，跟后端 PageResult 对齐
     size: 20,
     unreadOnly: false,
     pollTimer: null as ReturnType<typeof setInterval> | null,
@@ -59,36 +59,33 @@ export const useNotificationStore = defineStore('notification', {
 
     async setUnreadOnly(v: boolean) {
       this.unreadOnly = v
-      this.page = 0
+      this.page = 1
       await this.refreshList()
     },
 
     async nextPage() {
-      if ((this.page + 1) * this.size >= this.total) return
+      if (this.page * this.size >= this.total) return
       this.page += 1
       await this.refreshList()
     },
 
     async prevPage() {
-      if (this.page === 0) return
+      if (this.page <= 1) return
       this.page -= 1
       await this.refreshList()
     },
 
     async markRead(nid: string) {
       await markRead(nid)
-      const idx = this.items.findIndex(i => i.id === nid)
-      if (idx >= 0 && this.items[idx].read === false) {
-        this.items[idx].read = true
-        if (this.unreadCount > 0) this.unreadCount -= 1
-      }
+      // 重新拉 unreadCount + 当前 items，避免乐观更新与轮询竞态
+      await Promise.all([this.refreshUnread(), this.refreshList()])
     },
 
     async markAllRead() {
       const { data } = await markAllRead()
       if (data?.code === 0) {
-        this.items = this.items.map(i => ({ ...i, read: true }))
-        this.unreadCount = 0
+        // 后端标记了若干条；重新拉保证数据一致（unreadCount 可能还有别的设备/标签页没清的）
+        await Promise.all([this.refreshUnread(), this.refreshList()])
       }
     },
 

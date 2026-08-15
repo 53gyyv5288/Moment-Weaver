@@ -20,8 +20,9 @@ const items = computed<NotificationVO[]>(() => store.items)
 const total = computed(() => store.total)
 const page = computed(() => store.page)
 const size = computed(() => store.size)
-const hasNext = computed(() => (page.value + 1) * size.value < total.value)
-const hasPrev = computed(() => page.value > 0)
+// 1-based 分页（与后端 PageResult 对齐）
+const hasNext = computed(() => page.value * size.value < total.value)
+const hasPrev = computed(() => page.value > 1)
 
 function visual(type: string) {
   return NOTIFICATION_VISUAL[type] || NOTIFICATION_VISUAL.UNKNOWN

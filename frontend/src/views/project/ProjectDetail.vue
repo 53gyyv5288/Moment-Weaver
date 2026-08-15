@@ -195,15 +195,28 @@ async function onCreateAuthz() {
     ElMessage.warning('请选择人物')
     return
   }
+  // 找到被采访者，判断是否是家族成员（有 linkedUserId 就有账号）
+  const subj = subjects.value.find(s => String(s.id) === String(newAuthz.value.subjectId))
+  const isFamilyMember = !!(subj?.linkedUserId)
   const { data } = await createAuthorization(projectId.value, {
     subjectId: newAuthz.value.subjectId,
     scopes: newAuthz.value.scopes,
   })
   if (data && data.code === 0) {
-    ElMessage.success('授权链接已生成')
     showCreateAuthz.value = false
-    await navigator.clipboard.writeText(data.data!.publicUrl || '')
-    ElMessage.info('链接已复制到剪贴板')
+    if (isFamilyMember) {
+      // M11 Phase 2：家族成员会收到站内通知，无需复制链接
+      ElMessage.success('授权邀请已发送，被采访者将在通知中心看到')
+    } else {
+      // 匿名被采访者：还是需要复制链接给 TA
+      ElMessage.success('授权链接已生成（被采访者无账号，请手动发给 TA）')
+      try {
+        await navigator.clipboard.writeText(data.data!.publicUrl || '')
+        ElMessage.info('链接已复制到剪贴板')
+      } catch {
+        ElMessage.warning('复制失败，请手动复制：' + data.data!.publicUrl)
+      }
+    }
     await load()
   } else {
     ElMessage.error(data?.message || '生成失败')
