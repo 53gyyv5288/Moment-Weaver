@@ -250,7 +250,8 @@ public class AuthorizationService {
                 "采访授权已通过",
                 String.format("「%s」已同意采访授权，可开始对话", subj.getDisplayName()),
                 String.valueOf(a.getId()),
-                "/interview/" + findSessionIdForSubject(a.getSubjectId()),  // deepLink：直接跳采访房间（兜底跳列表）
+                // M11 Phase 2 修复：跳到项目详情页（这里还没有 interview session，跳 /interview/<空 id> 会 404 空页面）
+                "/projects/" + proj.getId(),
                 meta
             ));
         }
@@ -258,13 +259,14 @@ public class AuthorizationService {
     }
 
     /**
-     * 找到这个 subject 最近的 active interview session id（用于 deepLink）。
-     * 找不返回 null。
+     * 保留接口：找该 subject 最近的 active interview session id。
+     * 当前没用上，留着给未来"如果项目已存在 active session 时直接跳过去"用。
      */
+    @SuppressWarnings("unused")
     private String findSessionIdForSubject(Long subjectId) {
         // 这里不依赖 InterviewService（避免循环依赖），用最简单 SQL：
-        // 找该 subject 最新一个 status=active 的 session，project_id 来自 subject
-        // 简化：直接返回空（前端 deepLink 为空会停留在通知列表，不会跳错页面）
+        // 找该 subject 最新一个 status=active 的 session
+        // 当前未实现（直接走 /projects/{id} 兜底）
         return "";
     }
 

@@ -31,7 +31,10 @@ function formatTime(s?: string) {
 async function onItemClick(n: NotificationVO, e: Event) {
   e.stopPropagation()
   if (!n.read) await store.markRead(n.id)
-  if (n.deepLink) router.push(n.deepLink)
+  // 只在 deepLink 真实有效时才跳转；空字符串/末尾 / 都视为无效 → 停在通知列表
+  if (n.deepLink && n.deepLink.trim() !== '' && !n.deepLink.endsWith('/')) {
+    router.push(n.deepLink)
+  }
 }
 
 async function onRefresh() {

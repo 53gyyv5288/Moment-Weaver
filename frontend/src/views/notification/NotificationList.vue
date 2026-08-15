@@ -37,7 +37,10 @@ function formatTime(s?: string) {
 
 async function onItemClick(n: NotificationVO) {
   if (!n.read) await store.markRead(n.id)
-  if (n.deepLink) router.push(n.deepLink)
+  // 只在 deepLink 真实有效（非空字符串、非路径末尾 /）时才跳转
+  if (n.deepLink && n.deepLink.trim() !== '' && !n.deepLink.endsWith('/')) {
+    router.push(n.deepLink)
+  }
 }
 
 async function onMarkAllRead() {
