@@ -17,6 +17,17 @@ public class Authorization {
 
     private Long subjectId;
     private Long projectId;
+    /**
+     * V15：冗余自 Subject.familyMemberId。
+     * 同 familyMember 在同 family 内的 grant 共享给所有同 familyMember subject。
+     * NULL=匿名 subject 或旧数据未回填。
+     */
+    private Long familyMemberId;
+    /**
+     * V15：冗余自 Project.familyId。跨 family 隔离依据。
+     * NULL=个人项目或旧数据未回填。
+     */
+    private Long familyId;
     /** 不重复 token；公开链接用 */
     private String token;
     /** 逗号分隔：interview, narrative, asset, share */

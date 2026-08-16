@@ -34,7 +34,7 @@ async def search(req: SearchRequest) -> SearchResponse:
 
     # 0) Authorization 防御性校验
     try:
-        await authorization.check_subject_authorization(
+        auth_ctx = await authorization.check_subject_authorization(
             subject_id=req.subject_id, user_id=req.user_id,
         )
     except authorization.RagAuthError as e:
@@ -66,6 +66,9 @@ async def search(req: SearchRequest) -> SearchResponse:
             subject_id=req.subject_id,
             top_k=top_k,
             extra_filter=extra_filter or req.extra_filter,
+            # V15：跨 family 隔离 + 同 familyMember 共享
+            family_id=auth_ctx.family_id,
+            family_member_id=auth_ctx.family_member_id,
             # output_fields 不传 → milvus_client 按集合自动选合法的字段
         )
     except Exception as e:  # noqa: BLE001

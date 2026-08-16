@@ -43,6 +43,10 @@ class SearchRequest(BaseModel):
     user_id: int | None = Field(default=None, description="防御性鉴权")
     top_k: int | None = None  # None 时使用 settings.rag_top_k
     extra_filter: str | None = None  # 额外 Milvus filter（已 union subject_id/revoked）
+    # V15：跨 family 隔离 + 同 familyMember 共享授权。
+    # 由 Spring /authorizations/check 响应里带回；缺省 0 = 退回原 subject 粒度。
+    family_id: int = Field(default=0, description="subject 所在 family；0=个人项目/未回填")
+    family_member_id: int = Field(default=0, description="subject 对应 familyMember；0=匿名 subject")
 
 
 class EvidenceChunk(BaseModel):

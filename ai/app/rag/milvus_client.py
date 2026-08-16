@@ -82,6 +82,11 @@ def _interview_schema() -> Any:
             {"field_name": "parent_id", "data_type": DataType.VARCHAR, "max_length": 128},
             {"field_name": "is_curated_for_facts", "data_type": DataType.BOOL},
             {"field_name": "revoked_at", "data_type": DataType.INT64, "nullable": True},
+            # V15：跨 family 隔离 + 同 familyMember 共享。
+            # 旧 collection 没这两个字段时 upsert 会失败 → 写入端降级（pipeline_ingest）。
+            # 0 = 个人项目 / 匿名 subject / 旧数据。
+            {"field_name": "family_id", "data_type": DataType.INT64, "nullable": True},
+            {"field_name": "family_member_id", "data_type": DataType.INT64, "nullable": True},
         ],
         # Function 让 Milvus 在写入时自动从 chunk_text 计算 sparse_bm25
         "functions": [{
@@ -111,6 +116,9 @@ def _asset_schema() -> Any:
             {"field_name": "taken_at", "data_type": DataType.INT64},
             {"field_name": "file_url", "data_type": DataType.VARCHAR, "max_length": 512},
             {"field_name": "revoked_at", "data_type": DataType.INT64, "nullable": True},
+            # V15：见 _interview_schema 同名字段说明
+            {"field_name": "family_id", "data_type": DataType.INT64, "nullable": True},
+            {"field_name": "family_member_id", "data_type": DataType.INT64, "nullable": True},
         ],
         "functions": [{
             "name": "bm25_fn",
@@ -135,6 +143,9 @@ _INTERVIEW_INDEX_PARAMS = [
     {"field_name": "session_id", "index_type": "INVERTED"},
     {"field_name": "revoked_at", "index_type": "INVERTED"},
     {"field_name": "is_curated_for_facts", "index_type": "INVERTED"},
+    # V15：跨 family 隔离 + 同 familyMember 共享
+    {"field_name": "family_id", "index_type": "INVERTED"},
+    {"field_name": "family_member_id", "index_type": "INVERTED"},
 ]
 
 _ASSET_INDEX_PARAMS = [
@@ -149,6 +160,9 @@ _ASSET_INDEX_PARAMS = [
     {"field_name": "kind", "index_type": "INVERTED"},
     {"field_name": "taken_at", "index_type": "INVERTED"},
     {"field_name": "revoked_at", "index_type": "INVERTED"},
+    # V15：见 _INTERVIEW_INDEX_PARAMS
+    {"field_name": "family_id", "index_type": "INVERTED"},
+    {"field_name": "family_member_id", "index_type": "INVERTED"},
 ]
 
 
@@ -165,11 +179,15 @@ _OUTPUT_FIELDS_BY_COLLECTION: dict[str, list[str]] = {
         "chunk_id", "chunk_text", "parent_text",
         "subject_id", "session_id", "role",
         "created_at", "parent_id", "is_curated_for_facts",
+        # V15：用于 RAG evidence 透传给 Spring（调试 + 后续做 RAG 自审）
+        "family_id", "family_member_id",
     ],
     "asset_chunks": [
         "chunk_id", "chunk_text", "parent_text",
         "subject_id", "asset_id", "kind",
         "taken_at", "file_url",
+        # V15
+        "family_id", "family_member_id",
     ],
 }
 
@@ -240,7 +258,13 @@ def _ensure_one(client: MilvusClient, name: str,
         try:
             client.create_index(collection_name=name, index_params=ip)
         except Exception as e:  # noqa: BLE001
-            # 不能吞：索引建不上 → load 会失败 → 整个检索链路瘫痪，
+            # V15：旧 collection 缺 family_id / family_member_id 字段时索引建不上
+            # —— 跳过（不是中断），写入端会降级；等 backfill_rag.py 跑完、
+            # collection 用新 schema 重建后索引自然恢复。
+            if "family_id" in str(e) or "family_member_id" in str(e):
+                log.warning("V15 字段索引跳过（collection 缺字段，需 backfill）：%s", e)
+                continue
+            # 不能吞：其他索引建不上 → load 会失败 → 整个检索链路瘫痪，
             # 但 get_collection_stats 仍能读到行数，极易误判成「数据没写进去」。
             log.error("create_index FAILED: collection=%s field=%s: %s", name, field, e)
             raise
@@ -280,9 +304,29 @@ def warmup() -> None:
 
 # ============ Operations ============
 
-def _ensure_subject_filter(subject_id: str, extra: str | None) -> str:
-    """强制带 subject_id + revoked_at IS NULL。"""
-    parts = [f'subject_id == "{subject_id}"', "revoked_at IS NULL"]
+def _ensure_subject_filter(
+    subject_id: str,
+    extra: str | None,
+    *,
+    family_id: int = 0,
+    family_member_id: int = 0,
+) -> str:
+    """强制带 subject_id + revoked_at IS NULL。
+    V15：当 family_id/family_member_id 都非 0 时，扩展为
+    (subject_id == X OR (family_id == F AND family_member_id == M))
+    —— 跨 family 隔离 + 同 familyMember 共享。
+    fid/fmid=0 时退回原 subject 粒度（兼容旧 collection / 匿名 subject / 个人项目）。
+    """
+    if family_id and family_member_id:
+        # 注意：revoked_at IS NULL 必须 AND 在整个 (subject_id OR family) 外，
+        # 否则单臂 OR 可能在某些 Milvus 版本里绕过 revoke 过滤。
+        access = (
+            f'(subject_id == "{subject_id}" '
+            f'OR (family_id == {family_id} AND family_member_id == {family_member_id}))'
+        )
+    else:
+        access = f'subject_id == "{subject_id}"'
+    parts = [access, "revoked_at IS NULL"]
     if extra:
         parts.append(f"({extra})")
     return " AND ".join(parts)
@@ -291,27 +335,44 @@ def _ensure_subject_filter(subject_id: str, extra: str | None) -> str:
 def upsert_interview_chunks(rows: list[dict]) -> int:
     """rows 每条应已含 vector + sparse_bm25(Milvus 自动算) + 标量字段。
     chunk_id 唯一：upsert 自动覆盖。
+
+    V15：旧 collection 可能没有 family_id / family_member_id 字段。
+    写入失败时降级：去掉这两个字段重试一次（损失该 chunk 的跨 family 隔离能力，
+    但保持向后兼容）。生产应尽快 backfill 后重启服务触发新建 collection。
     """
     if not rows:
         return 0
     client = get_client()
     s = get_settings()
-    client.upsert(
-        collection_name=s.milvus_collection_interview,
-        data=rows,
-    )
+    try:
+        client.upsert(collection_name=s.milvus_collection_interview, data=rows)
+    except Exception as e:  # noqa: BLE001
+        if "family_id" in str(e) or "family_member_id" in str(e):
+            log.warning("V15 字段未在 collection 中，降级写入（无 family 隔离）：%s", e)
+            rows_legacy = [{k: v for k, v in r.items()
+                           if k not in ("family_id", "family_member_id")} for r in rows]
+            client.upsert(collection_name=s.milvus_collection_interview, data=rows_legacy)
+        else:
+            raise
     return len(rows)
 
 
 def upsert_asset_chunks(rows: list[dict]) -> int:
+    """见 upsert_interview_chunks 的 V15 降级说明。"""
     if not rows:
         return 0
     client = get_client()
     s = get_settings()
-    client.upsert(
-        collection_name=s.milvus_collection_asset,
-        data=rows,
-    )
+    try:
+        client.upsert(collection_name=s.milvus_collection_asset, data=rows)
+    except Exception as e:  # noqa: BLE001
+        if "family_id" in str(e) or "family_member_id" in str(e):
+            log.warning("V15 字段未在 collection 中，降级写入（无 family 隔离）：%s", e)
+            rows_legacy = [{k: v for k, v in r.items()
+                           if k not in ("family_id", "family_member_id")} for r in rows]
+            client.upsert(collection_name=s.milvus_collection_asset, data=rows_legacy)
+        else:
+            raise
     return len(rows)
 
 
@@ -325,12 +386,17 @@ def hybrid_search(
     extra_filter: str | None = None,
     output_fields: list[str] | None = None,
     ef: int = 64,
+    family_id: int = 0,
+    family_member_id: int = 0,
 ) -> list[dict]:
     """混合检索：dense ANN + sparse BM25，RRF 融合。
 
     query_text 直接传原始查询文本（不是稀疏向量）：sparse_bm25 是 BM25 Function
     的输出字段，Milvus 服务端会用同一个 analyzer 把查询文本转成稀疏向量，
     保证与写入时的分词口径一致。客户端自己构造稀疏向量会被拒绝。
+
+    V15：family_id / family_member_id 透传到 _ensure_subject_filter，
+    跨 family 隔离 + 同 familyMember 共享。
     """
     client = get_client()
     if output_fields is None:
@@ -349,16 +415,41 @@ def hybrid_search(
         param={"metric_type": "BM25"},
         limit=top_k,
     )
-    flt = _ensure_subject_filter(subject_id, extra_filter)
-    t0 = time.perf_counter()
-    results = client.hybrid_search(
-        collection_name=collection,
-        reqs=[req_dense, req_sparse],
-        ranker=RRFRanker(k=60),
-        limit=top_k,
-        output_fields=output_fields,
-        filter=flt,
+    flt = _ensure_subject_filter(
+        subject_id, extra_filter,
+        family_id=family_id, family_member_id=family_member_id,
     )
+    t0 = time.perf_counter()
+    try:
+        results = client.hybrid_search(
+            collection_name=collection,
+            reqs=[req_dense, req_sparse],
+            ranker=RRFRanker(k=60),
+            limit=top_k,
+            output_fields=output_fields,
+            filter=flt,
+        )
+    except Exception as e:  # noqa: BLE001
+        # V15：旧 collection 没 family_id / family_member_id 字段
+        # —— filter 和 output_fields 都可能引用，**两个都得降级**
+        if "family_id" in str(e) or "family_member_id" in str(e):
+            log.warning("V15 字段未在 collection 中，降级 filter + output_fields（无 family 隔离）：%s", e)
+            flt_legacy = _ensure_subject_filter(subject_id, extra_filter)
+            # 同步剥掉 output_fields 里的 family 字段
+            output_fields_legacy = [
+                f for f in output_fields
+                if f not in ("family_id", "family_member_id")
+            ]
+            results = client.hybrid_search(
+                collection_name=collection,
+                reqs=[req_dense, req_sparse],
+                ranker=RRFRanker(k=60),
+                limit=top_k,
+                output_fields=output_fields_legacy,
+                filter=flt_legacy,
+            )
+        else:
+            raise
     log.debug("hybrid_search %s top_k=%d cost=%.3fs",
               collection, top_k, time.perf_counter() - t0)
     # results[0] 是单 query 的 list[Hit]

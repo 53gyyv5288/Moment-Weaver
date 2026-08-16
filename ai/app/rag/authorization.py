@@ -3,16 +3,20 @@
 合规硬要求（plan §2.4）：
   - Milvus filter 必带 `subject_id == "..." AND revoked_at IS NULL`
   - FastAPI 层额外校验：
-    1) caller userId 必须是 subject_id 所在 workspace 的 member（防御性，本服务在
+    1) caller userId 必须是 subject_id 所在家族/工作区的 member（防御性，本服务在
        Spring 后端之后，原则上 Spring 已校验过；这里做兜底防止直连 RAG 服务）
     2) subject_id 对应的 Authorization.status == 'granted' 且未过期
 
 实现：直接调 Spring 后端的 /api/v1/memory/authorizations/check?subjectId=...
 失败抛 RagAuthError；Milvus filter 是性能过滤，这层是真正的安全边界。
+
+V15：响应里带回 familyId / familyMemberId，供 RAG 用作 Milvus filter
+（跨 family 隔离 + 同 familyMember 共享）。
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 
 import httpx
@@ -26,13 +30,20 @@ class RagAuthError(PermissionError):
     pass
 
 
+@dataclass
+class AuthContext:
+    """V15：authz check 通过后带回的上下文。"""
+    family_id: int = 0
+    family_member_id: int = 0
+
+
 def _now_ms() -> int:
     return int(datetime.utcnow().timestamp() * 1000)
 
 
 async def check_subject_authorization(
     *, subject_id: str, user_id: int | None
-) -> None:
+) -> AuthContext:
     """校验用户有权读取该 subject 的数据。
 
     跳过策略（**fail-closed** by default）：
@@ -54,12 +65,12 @@ async def check_subject_authorization(
     s = get_settings()
     if not user_id:
         # Spring 端做最终拦截；这里放过
-        return
+        return AuthContext()
     if not s.moment_backend_url:
         log.warning("MOMENT_BACKEND_URL 未配置，跳过 RAG authz 校验（开发模式）")
-        return
+        return AuthContext()
     # 调 Spring 端兜底接口（GET /api/v1/memory/subjects/{id}/authorizations）
-    # 取该 subject 的授权状态；user 必须对应 subject 所在 workspace 的 member
+    # 取该 subject 的授权状态；user 必须对应 subject 所在 family/workspace 的 member
     url = (s.moment_backend_url.rstrip("/")
            + f"/api/v1/memory/subjects/{subject_id}/authorizations/check"
            + f"?userId={user_id}")
@@ -81,16 +92,21 @@ async def check_subject_authorization(
 
     if resp.status_code == 200:
         data = resp.json()
-        status = (data.get("data") or {}).get("status")
+        inner = data.get("data") or {}
+        status = inner.get("status")
         if status != "granted":
             raise RagAuthError(f"subject {subject_id} 授权状态 {status}")
-        return
+        # V15：带回 familyId / familyMemberId（可能为 None / 0 → 退回原 subject 粒度）
+        return AuthContext(
+            family_id=int(inner.get("familyId") or 0),
+            family_member_id=int(inner.get("familyMemberId") or 0),
+        )
     if resp.status_code == 403:
-        raise RagAuthError(f"user {user_id} 非 subject {subject_id} 工作区成员")
+        raise RagAuthError(f"user {user_id} 非 subject {subject_id} 家族/工作区成员")
     if resp.status_code == 404:
         # 接口可能还没实现（plan 阶段 B），降级放过；Milvus filter 兜底
         log.debug("subject authz endpoint 404, skip")
-        return
+        return AuthContext()
     if resp.status_code == 401:
         # 内部调用未认证 → 不信任，必须 deny（修过的关键 bug：之前是 fallback to allow）
         log.error("authz check 401: AI 服务未通过 Spring 内部认证，fail-closed")

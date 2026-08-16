@@ -100,6 +100,10 @@ public class AuthorizationService {
         Authorization a = new Authorization();
         a.setSubjectId(s.getId());
         a.setProjectId(projectId);
+        // V15：denorm familyMemberId / familyId 用于 RAG 跨 subject 共享授权 + 跨 family 隔离
+        // 匿名 subject (familyMemberId=null) / 个人项目 (familyId=null) 保持 NULL，不影响行为
+        a.setFamilyMemberId(s.getFamilyMemberId());
+        a.setFamilyId(p.getFamilyId());
         a.setToken(generateToken());
         a.setScopes(String.join(",", valid));
         a.setStatus("pending");
@@ -256,7 +260,69 @@ public class AuthorizationService {
                 meta
             ));
         }
+
+        // V15：同 familyMember 在同 family 内的 grant 共享。
+        //   找同 familyMember + 同 family 的其它 subject，给它们也补一条 granted 记录（无 token）。
+        //   匿名 subject (familyMemberId=null) / 个人项目 (familyId=null) 跳过回填。
+        propagateGrantToSiblings(a);
+
         return a;
+    }
+
+    /**
+     * V15：把同 familyMember 在同 family 内的 grant 共享给所有兄弟 subject。
+     * 每个兄弟 subject 新增一条 status=granted、无 token 的 Authorization 记录。
+     * 已有 pending/granted 记录的兄弟跳过（避免冲突）。
+     */
+    private void propagateGrantToSiblings(Authorization granted) {
+        if (granted.getFamilyMemberId() == null || granted.getFamilyId() == null) {
+            return;  // 匿名 subject 或个人项目，不参与共享
+        }
+        List<Subject> siblings = subjectMapper.selectList(
+            new LambdaQueryWrapper<Subject>()
+                .eq(Subject::getFamilyMemberId, granted.getFamilyMemberId())
+                .ne(Subject::getId, granted.getSubjectId())
+        );
+        if (siblings.isEmpty()) {
+            return;
+        }
+        int propagated = 0;
+        for (Subject sib : siblings) {
+            Project sibP = projectMapper.selectById(sib.getProjectId());
+            if (sibP == null || !granted.getFamilyId().equals(sibP.getFamilyId())) {
+                continue;  // 跨 family 跳过（防御性，正常不会发生）
+            }
+            // 检查该 sib 是否有 pending/granted 记录（避免覆盖现有授权）
+            Long existing = authorizationMapper.selectCount(
+                new LambdaQueryWrapper<Authorization>()
+                    .eq(Authorization::getSubjectId, sib.getId())
+                    .in(Authorization::getStatus, "pending", "granted")
+            );
+            if (existing != null && existing > 0) {
+                continue;
+            }
+            // 新建 granted 记录（无 token —— 兄弟 subject 的 token 由它们自己的 create() 生成）
+            LocalDateTime now = LocalDateTime.now();
+            Authorization copy = new Authorization();
+            copy.setSubjectId(sib.getId());
+            copy.setProjectId(sib.getProjectId());
+            copy.setFamilyMemberId(granted.getFamilyMemberId());
+            copy.setFamilyId(granted.getFamilyId());
+            copy.setScopes(granted.getScopes());
+            copy.setStatus("granted");
+            copy.setConsentVersion(granted.getConsentVersion());
+            copy.setGrantedAt(now);
+            copy.setCreatedAt(now);
+            copy.setUpdatedAt(now);
+            // expiresAt：跟原 grant 一致；已过期的回填也没意义，但保持语义
+            copy.setExpiresAt(granted.getExpiresAt());
+            authorizationMapper.insert(copy);
+            propagated++;
+        }
+        if (propagated > 0) {
+            log.info("V15 grant propagated: familyMemberId={} familyId={} → {} sibling(s)",
+                granted.getFamilyMemberId(), granted.getFamilyId(), propagated);
+        }
     }
 
     /**

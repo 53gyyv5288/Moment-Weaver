@@ -65,7 +65,10 @@ async def _post_ingest(client: httpx.AsyncClient, body: dict) -> int:
         return 0
 
 
-def _msgs_to_chunks(messages: list[dict], session_id: str, subject_id: str) -> list[dict]:
+def _msgs_to_chunks(
+    messages: list[dict], session_id: str, subject_id: str,
+    *, family_id: int = 0, family_member_id: int = 0,
+) -> list[dict]:
     """与 AI 端 chunker.interview_chunks 规则一致：每对 user+assistant 一片。"""
     out: list[dict] = []
     i = 0
@@ -96,12 +99,44 @@ def _msgs_to_chunks(messages: list[dict], session_id: str, subject_id: str) -> l
                     "role": "user+assistant",
                     "turn_index": j,
                     "created_at_ms": _ms(m.get("createdAt")),
+                    # V15：跨 family 隔离 + 同 familyMember 共享
+                    "family_id": family_id,
+                    "family_member_id": family_member_id,
                 },
             })
             j += 1
             i += 2 if asst else 1
         else:
             i += 1
+    return out
+
+
+def _fetch_subject_family_map() -> dict[str, tuple[int, int]]:
+    """V15：批量查 subject_id → (family_id, family_member_id)。
+
+    个人项目 family_id=0；匿名 subject family_member_id=0。
+    """
+    if pymysql is None:
+        print("⚠️  pymysql 未装，backfill family 字段为 0")
+        return {}
+    host = os.getenv("MYSQL_HOST", "localhost")
+    port = int(os.getenv("MYSQL_PORT", "3306"))
+    user = os.getenv("MYSQL_USER", "root")
+    pwd = os.getenv("MYSQL_PASSWORD", "")
+    db_name = os.getenv("MYSQL_DB", "moment_weaver")
+    conn = pymysql.connect(host=host, port=port, user=user, password=pwd,
+                            database=db_name, charset="utf8mb4")
+    out: dict[str, tuple[int, int]] = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT s.id, IFNULL(s.family_member_id, 0), IFNULL(p.family_id, 0) "
+                "FROM subject s JOIN project p ON p.id = s.project_id"
+            )
+            for row in cur.fetchall():
+                out[str(row[0])] = (int(row[2]), int(row[1]))  # (family_id, family_member_id)
+    finally:
+        conn.close()
     return out
 
 
@@ -112,14 +147,17 @@ def fetch_interview_chunks() -> list[dict]:
     mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
     mongo_db = os.getenv("MONGO_DB", "moment_weaver")
     db = MongoClient(mongo_uri)[mongo_db]
+    fam_map = _fetch_subject_family_map()
     all_chunks: list[dict] = []
     for doc in db.interview_session.find({}):
         sid = str(doc.get("_id"))
         subject_id = str(doc.get("subjectId") or "")
         if not subject_id:
             continue
+        family_id, family_member_id = fam_map.get(subject_id, (0, 0))
         msgs = doc.get("messages") or []
-        chunks = _msgs_to_chunks(msgs, sid, subject_id)
+        chunks = _msgs_to_chunks(msgs, sid, subject_id,
+                                 family_id=family_id, family_member_id=family_member_id)
         all_chunks.extend(chunks)
     print(f"  interview: {len(all_chunks)} chunks from {db.interview_session.count_documents({})} sessions")
     return all_chunks
@@ -136,6 +174,7 @@ def fetch_asset_chunks() -> list[dict]:
     db_name = os.getenv("MYSQL_DB", "moment_weaver")
     conn = pymysql.connect(host=host, port=port, user=user, password=pwd,
                             database=db_name, charset="utf8mb4")
+    fam_map = _fetch_subject_family_map()
     out: list[dict] = []
     try:
         with conn.cursor() as cur:
@@ -147,6 +186,7 @@ def fetch_asset_chunks() -> list[dict]:
                 asset_id, subject_id, kind, caption, taken_at, oss_key, original_name = row
                 if subject_id is None:
                     continue
+                family_id, family_member_id = fam_map.get(str(subject_id), (0, 0))
                 caption = caption or ""
                 kind = kind or "image"
                 chunk_text = f"素材描述：{caption}"
@@ -169,6 +209,9 @@ def fetch_asset_chunks() -> list[dict]:
                         "kind": kind,
                         "taken_at": _ms(taken_at),
                         "file_url": oss_key or "",
+                        # V15
+                        "family_id": family_id,
+                        "family_member_id": family_member_id,
                     },
                 })
     finally:

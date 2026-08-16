@@ -1,8 +1,10 @@
 package com.momentweaver.memory.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.momentweaver.account.entity.FamilyMember;
 import com.momentweaver.account.entity.Project;
 import com.momentweaver.account.entity.WorkspaceMember;
+import com.momentweaver.account.mapper.FamilyMemberMapper;
 import com.momentweaver.account.mapper.ProjectMapper;
 import com.momentweaver.account.mapper.WorkspaceMemberMapper;
 import com.momentweaver.common.BusinessException;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -36,9 +39,16 @@ import java.util.Map;
  * <ul>
  *   <li>401 —— 缺少 / 错误 secret（fail-closed）</li>
  *   <li>404 —— subjectId 不存在</li>
- *   <li>403 —— userId 非 subject 所在工作区成员</li>
- *   <li>200 + {@code data.status="granted"} —— 授权有效</li>
+ *   <li>403 —— userId 非 subject 所在家族/工作区成员（fail-closed）</li>
+ *   <li>200 + {@code data.status="granted"} —— 授权有效；data 含 familyId / familyMemberId 供 RAG 透传</li>
  *   <li>200 + {@code data.status="denied"/"pending"/"revoked"/"expired"} —— 未授权</li>
+ * </ul>
+ *
+ * <p>V15 变更：
+ * <ul>
+ *   <li>user 校验：家族项目按 family_member 校验；个人项目按 workspace_member 校验</li>
+ *   <li>授权查：除 subject 自身 grant 外，还查同 familyMember 在同 family 内的 grant（共享）</li>
+ *   <li>响应带回 familyId / familyMemberId，RAG 用作 Milvus filter 跨 family 隔离 + familyMember 共享</li>
  * </ul>
  */
 @Slf4j
@@ -50,6 +60,8 @@ public class InternalAuthzController {
     private final SubjectMapper subjectMapper;
     private final ProjectMapper projectMapper;
     private final WorkspaceMemberMapper workspaceMemberMapper;
+    /** V15：家族成员关系查询（family 维度隔离校验） */
+    private final FamilyMemberMapper familyMemberMapper;
     private final AuthorizationMapper authorizationMapper;
 
     @Value("${moment.security.internal-secret}")
@@ -78,25 +90,43 @@ public class InternalAuthzController {
             throw new BusinessException(ResultCode.NOT_FOUND, "subject 不存在");
         }
 
-        // 3) userId（若有）必须是 subject 所在工作区的成员
+        // 3) userId（若有）必须是 subject 所在家族/工作区的成员
+        //    V15：家族项目按 family_member 校验；个人项目按 workspace_member 校验
         //    AI 服务传 userId 时校验；不传时跳过（依赖 Milvus filter 兜底）
+        Project p = projectMapper.selectById(s.getProjectId());
+        if (p == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "subject 关联的项目不存在");
+        }
         if (userId != null) {
-            Project p = projectMapper.selectById(s.getProjectId());
-            if (p == null) {
-                throw new BusinessException(ResultCode.NOT_FOUND, "subject 关联的项目不存在");
-            }
-            Long cnt = workspaceMemberMapper.selectCount(
-                new LambdaQueryWrapper<WorkspaceMember>()
-                    .eq(WorkspaceMember::getWorkspaceId, p.getWorkspaceId())
-                    .eq(WorkspaceMember::getUserId, userId)
-            );
-            if (cnt == null || cnt == 0) {
-                throw new BusinessException(ResultCode.FORBIDDEN,
-                    "user " + userId + " 非 subject " + subjectId + " 工作区成员");
+            boolean memberOk = false;
+            if (p.getFamilyId() != null) {
+                Long cnt = familyMemberMapper.selectCount(
+                    new LambdaQueryWrapper<FamilyMember>()
+                        .eq(FamilyMember::getFamilyId, p.getFamilyId())
+                        .eq(FamilyMember::getUserId, userId)
+                );
+                memberOk = cnt != null && cnt > 0;
+                if (!memberOk) {
+                    throw new BusinessException(ResultCode.FORBIDDEN,
+                        "user " + userId + " 非 subject " + subjectId + " 家族成员");
+                }
+            } else {
+                Long cnt = workspaceMemberMapper.selectCount(
+                    new LambdaQueryWrapper<WorkspaceMember>()
+                        .eq(WorkspaceMember::getWorkspaceId, p.getWorkspaceId())
+                        .eq(WorkspaceMember::getUserId, userId)
+                );
+                memberOk = cnt != null && cnt > 0;
+                if (!memberOk) {
+                    throw new BusinessException(ResultCode.FORBIDDEN,
+                        "user " + userId + " 非 subject " + subjectId + " 工作区成员");
+                }
             }
         }
 
         // 4) 查该 subject 是否有 granted 状态的 Authorization（未过期）
+        //    V15：除 subject 自身 grant 外，还查同 familyMember 在同 family 内的 grant（共享）
+        //    匿名 subject (familyMemberId=null) 跳过 Step B
         Authorization a = authorizationMapper.selectOne(
             new LambdaQueryWrapper<Authorization>()
                 .eq(Authorization::getSubjectId, s.getId())
@@ -104,6 +134,16 @@ public class InternalAuthzController {
                 .orderByDesc(Authorization::getGrantedAt)
                 .last("LIMIT 1")
         );
+        if (a == null && s.getFamilyMemberId() != null && p.getFamilyId() != null) {
+            a = authorizationMapper.selectOne(
+                new LambdaQueryWrapper<Authorization>()
+                    .eq(Authorization::getFamilyMemberId, s.getFamilyMemberId())
+                    .eq(Authorization::getFamilyId, p.getFamilyId())
+                    .eq(Authorization::getStatus, "granted")
+                    .orderByDesc(Authorization::getGrantedAt)
+                    .last("LIMIT 1")
+            );
+        }
 
         String status;
         if (a == null) {
@@ -119,7 +159,13 @@ public class InternalAuthzController {
         }
 
         log.debug("Internal authz check sid={} uid={} → status={}", subjectId, userId, status);
-        return Result.ok(Map.of("status", status));
+
+        // V15：响应带回 familyId / familyMemberId，RAG 用来构建 Milvus filter（跨 family 隔离 + 共享）
+        Map<String, Object> data = new HashMap<>();
+        data.put("status", status);
+        data.put("familyId", p.getFamilyId());
+        data.put("familyMemberId", s.getFamilyMemberId());
+        return Result.ok(data);
     }
 
     /** 常量时间字符串比较（防御时序攻击；secret 长度通常 < 64，无需太多担心但有比没有好）。 */

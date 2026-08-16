@@ -49,10 +49,15 @@ async def ingest_interview_session(
     messages: list[dict],
     created_at_ms: int | None = None,
     is_curated_for_facts: bool = False,
+    family_id: int = 0,
+    family_member_id: int = 0,
 ) -> int:
     """单 session 灌库。Spring Event 触发。
 
     messages：Mongo 里的 InterviewMessage 列表（dict 形式，含 role/content/thinking）。
+
+    V15：family_id / family_member_id 写到每条 chunk，跨 family 隔离 + 共享授权。
+    0 = 个人项目 / 匿名 subject / 旧 collection 降级。
     """
     s = get_settings()
     raw = chunker.interview_chunks(messages, session_id=session_id)
@@ -73,6 +78,9 @@ async def ingest_interview_session(
             "parent_id": c["parent_id"],
             "is_curated_for_facts": is_curated_for_facts,
             "revoked_at": None,
+            # V15
+            "family_id": family_id,
+            "family_member_id": family_member_id,
         })
     inserted = await _embed_and_upsert(rows, collection=s.milvus_collection_interview)
     log.info("ingest_interview_session: session=%s subject=%s chunks=%d",
@@ -83,7 +91,10 @@ async def ingest_interview_session(
 # ============ Asset ============
 
 async def ingest_asset(asset: dict, *, linked_messages: list[dict] | None = None) -> int:
-    """单 Asset 灌库。Spring Event 触发。"""
+    """单 Asset 灌库。Spring Event 触发。
+
+    V15：family_id / family_member_id 由 Spring 调用方从 Subject 查好后传入。
+    """
     s = get_settings()
     raw = chunker.asset_chunks(asset, linked_messages=linked_messages)
     if not raw:
@@ -91,6 +102,9 @@ async def ingest_asset(asset: dict, *, linked_messages: list[dict] | None = None
     subject_id = str(asset.get("subjectId") or "")
     if not subject_id:
         raise ValueError(f"asset {asset.get('id')} missing subjectId")
+    # V15：从 asset dict 读 family 字段（Spring ingest 端在写时附带）
+    family_id = int(asset.get("familyId") or 0)
+    family_member_id = int(asset.get("familyMemberId") or 0)
     rows: list[dict] = []
     for c in raw:
         taken_at = _coerce_ms(c["metadata"].get("taken_at"))
@@ -104,6 +118,9 @@ async def ingest_asset(asset: dict, *, linked_messages: list[dict] | None = None
             "file_url": c["metadata"].get("file_url", ""),
             "chunk_id": c["chunk_id"],
             "revoked_at": None,
+            # V15
+            "family_id": family_id,
+            "family_member_id": family_member_id,
         })
     inserted = await _embed_and_upsert(rows, collection=s.milvus_collection_asset)
     log.info("ingest_asset: asset=%s subject=%s chunks=%d",
@@ -140,6 +157,9 @@ def _interview_row(c: ChunkUpsert, *, is_curated: bool) -> dict:
         "parent_id": c.parent_id or "",
         "is_curated_for_facts": bool(is_curated or md.get("is_curated_for_facts")),
         "revoked_at": md.get("revoked_at"),
+        # V15：从 metadata 透传；缺省 0 = 退回 subject 粒度
+        "family_id": int(md.get("family_id") or 0),
+        "family_member_id": int(md.get("family_member_id") or 0),
     }
 
 
@@ -155,6 +175,9 @@ def _asset_row(c: ChunkUpsert) -> dict:
         "file_url": md.get("file_url", ""),
         "chunk_id": c.chunk_id,
         "revoked_at": md.get("revoked_at"),
+        # V15
+        "family_id": int(md.get("family_id") or 0),
+        "family_member_id": int(md.get("family_member_id") or 0),
     }
 
 
