@@ -78,15 +78,41 @@ public class InterviewService {
         void onRagResult(String sessionId, List<RagCacheService.EvidenceItem> items);
     }
 
-    /** 启动一个新采访会话（不立即调 AI）。 */
+    /**
+     * 启动一个新采访会话。
+     *
+     * <p>权限（M11 Phase 3 + 后续代答模式）：
+     * <ul>
+     *   <li>subject.linkedUserId != null（被采访者有账号）—— 只有 subject.linkedUserId == userId 的
+     *       "被采访者本人"才能启动。这防止 userA 替 userB 启动 session 导致 AI 误判对话角色。</li>
+     *   <li>subject.linkedUserId == null（匿名 subject，如老人没账号）—— 代答是高权力动作
+     *       （产生的对话进入时间线、影响成稿），仅 admin/owner 可启动
+     *       （userA 代答模式：userA 当面陪老人，AI 提问 → userA 转述 → userA 代输入）。</li>
+     * </ul>
+     *
+     * <p>历史：`PublicInterviewController.startByToken` 已被移除（公开 token 端点不再承载采访，
+     * 老人没账号的场景全部走 userA 代答模式）。
+     */
     public InterviewSessionVO start(Long userId, InterviewStartRequest req) {
         Project p = mustProject(req.getProjectId());
-        // 启动采访需要 editor 权限（family 项目里 viewer 不可；个人项目所有 workspace 成员可）
-        projectAccessChecker.requireEditor(p.getId(), userId);
 
         Subject s = mustSubject(req.getSubjectId());
         if (!s.getProjectId().equals(p.getId())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "人物不属于该项目");
+        }
+
+        if (s.getLinkedUserId() != null) {
+            // 路径 1：被采访者有账号 → 只有本人能启动
+            // 入口先校验"我是项目成员"以防越权探测别人的 subject
+            projectAccessChecker.requireMember(p.getId(), userId);
+            if (!s.getLinkedUserId().equals(userId)) {
+                throw new BusinessException(ResultCode.FORBIDDEN,
+                    "只有被采访者本人才能开始采访（您是项目成员，但不是被采访者本人）");
+            }
+        } else {
+            // 路径 2：匿名 subject（老人没账号）→ userA 代答模式
+            // 代答是高权力动作（产生的对话进入时间线、影响成稿），仅 admin/owner 可触发
+            projectAccessChecker.requireOwner(p.getId(), userId);
         }
 
         Authorization authz;
@@ -118,6 +144,11 @@ public class InterviewService {
         sess.setStatus("active");
         sess.setSubjectDisplayName(s.getDisplayName());
         sess.setProjectName(p.getName());
+        // 记录 session 启动者：
+        //   - 路径 1（userB 本人）：等于 subject.linkedUserId
+        //   - 路径 2（userA 代答）：等于 userA
+        //   streamMessage / canStream 都按"userId == startedByUserId"校验，两路一致
+        sess.setStartedByUserId(userId);
 
         LocalDateTime now = LocalDateTime.now();
         sess.setStartedAt(now);
@@ -126,14 +157,15 @@ public class InterviewService {
         // 系统提示作为第一条消息
         InterviewMessage sys = InterviewMessage.builder()
             .role("system")
-            .source("human") // 提示词由后端注入，标记 human 即可
+            .source("human")
             .content(buildSystemHint(s))
             .createdAt(now)
             .build();
         sess.getMessages().add(sys);
 
         InterviewSession saved = sessionRepo.save(sess);
-        return toVO(saved);
+        // start() 一定是被采访者本人调，所以 canStream=true
+        return toVO(saved, userId);
     }
 
     /**
@@ -154,7 +186,17 @@ public class InterviewService {
                                                      RagEmitterCallback ragCallback) {
         InterviewSession sess = mustSession(sessionId);
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
-        projectAccessChecker.requireEditor(p.getId(), userId);
+        // M11 Phase 3：只有 session 启动者才能继续讲话
+        //   - 路径 1（被采访者本人启动）：只有 userB 自己能说
+        //   - 路径 2（userA 代答启动）：只有 userA 自己能说（userB 没账号）
+        //   - 防御性兜底：startedByUserId==null（极老数据，无主）→ 退化为 requireEditor
+        if (sess.getStartedByUserId() != null && !sess.getStartedByUserId().equals(userId)) {
+            throw new BusinessException(ResultCode.FORBIDDEN,
+                "只有创建本采访的人才能继续对话");
+        }
+        if (sess.getStartedByUserId() == null) {
+            projectAccessChecker.requireEditor(p.getId(), userId);
+        }
 
         // 1) 计算 RAG ingest 起始 turn index（在追加 user 消息之前）
         // 这样 chunk_id 是 stable：interview:{sid}:turn_{startTurnIndex}
@@ -537,7 +579,7 @@ public class InterviewService {
         InterviewSession sess = mustSession(sessionId);
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
         projectAccessChecker.requireMember(p.getId(), userId);
-        return toVO(sess);
+        return toVO(sess, userId);
     }
 
     public List<InterviewSessionVO> listByProject(Long userId, Long projectId) {
@@ -545,19 +587,25 @@ public class InterviewService {
         projectAccessChecker.requireMember(p.getId(), userId);
         return sessionRepo.findByProjectIdOrderByLastMessageAtDesc(String.valueOf(projectId))
             .stream()
-            .map(this::toVO)
+            .map(s -> toVO(s, userId))
             .toList();
     }
 
     /**
      * 关闭会话。
      * 关闭后若尚无 summary，异步触发一次摘要生成（不阻塞 close 接口）。
+     *
+     * M11 Phase 3：关闭权归"被采访者本人"（即 session 创建者）。
+     * 考虑到项目 owner 通常也是被采访者（自传场景），仍然允许项目 owner 关闭。
      */
     public InterviewSessionVO close(Long userId, String sessionId) {
         InterviewSession sess = mustSession(sessionId);
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
-        if (!p.getOwnerId().equals(userId)) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "仅项目 Owner 可关闭会话");
+        boolean isStarter = sess.getStartedByUserId() != null && sess.getStartedByUserId().equals(userId);
+        boolean isProjectOwner = p.getOwnerId().equals(userId);
+        if (!isStarter && !isProjectOwner) {
+            throw new BusinessException(ResultCode.FORBIDDEN,
+                "仅被采访者本人或项目 Owner 可关闭会话");
         }
         sess.setStatus("closed");
         sess.setClosedAt(LocalDateTime.now());
@@ -576,7 +624,7 @@ public class InterviewService {
         }
         // STM：会话关闭 → 清 Redis 短期记忆（避免悬挂 + 释放内存）
         stmService.clear(sessionId);
-        return toVO(saved);
+        return toVO(saved, userId);
     }
 
     /** 手动触发一次摘要（M3 阶段；前端「重新生成摘要」按钮）。 */
@@ -585,7 +633,7 @@ public class InterviewService {
         Project p = mustProject(Long.parseLong(sess.getProjectId()));
         projectAccessChecker.requireMember(p.getId(), userId);
         summarizeSync(sess);
-        return toVO(sess);
+        return toVO(sess, userId);
     }
 
     /** 异步：关 close 后自动调一次 */
@@ -720,6 +768,15 @@ public class InterviewService {
     }
 
     private InterviewSessionVO toVO(InterviewSession s) {
+        return toVO(s, null);
+    }
+
+    /**
+     * M11 Phase 3：填充 canStream 字段。
+     * canStream = 当前 userId 能否调 streamMessage（即是这个 session 的创建者
+     * 或 session 是公开 token 创建的）。
+     */
+    private InterviewSessionVO toVO(InterviewSession s, Long currentUserId) {
         InterviewSessionVO vo = new InterviewSessionVO();
         vo.setId(s.getId());
         vo.setProjectId(s.getProjectId());
@@ -733,6 +790,19 @@ public class InterviewService {
         vo.setStartedAt(s.getStartedAt());
         vo.setLastMessageAt(s.getLastMessageAt());
         vo.setClosedAt(s.getClosedAt());
+        vo.setStartedByUserId(s.getStartedByUserId());
+
+        // canStream 计算：
+        //   - session.startedByUserId == null → 公开 token 创建，任何人都能继续（公共端点鉴权）
+        //   - session.startedByUserId == currentUserId → 本人
+        //   - 其他 → false（不能让 userA 替 userB 说话）
+        boolean canStream = false;
+        if (s.getStartedByUserId() == null) {
+            canStream = true;  // 公开 token 路径
+        } else if (currentUserId != null && s.getStartedByUserId().equals(currentUserId)) {
+            canStream = true;
+        }
+        vo.setCanStream(canStream);
         return vo;
     }
 

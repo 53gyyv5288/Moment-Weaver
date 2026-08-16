@@ -64,20 +64,29 @@ public class ProjectAccessChecker {
 
     /**
      * 校验 userId 是 projectId 的 Owner（删项目等高权限操作）。
-     * 个人项目：Project.owner_id
-     * 家族项目：family.owner_user_id（家族管理员 = 家族项目 Owner）
+     * <ul>
+     *   <li>个人项目：Project.owner_id</li>
+     *   <li>家族项目：family_member.role = admin <b>或</b> Project.owner_id（项目创建者本人）</li>
+     * </ul>
+     *
+     * <p>修复：之前家族项目只允许 family admin 删，导致 editor 创建的项目自己删不掉。
+     * 现在允许项目创建者（任何家族角色）也能删自己创建的项目。
      */
     public void requireOwner(Long projectId, Long userId) {
         Project p = mustProject(projectId);
         if (p.getFamilyId() != null) {
-            // 家族项目：用 family_member.role = admin 校验
+            // 家族项目：先看是不是项目创建者（任意家族成员都能删自己创建的项目）
+            if (p.getOwnerId().equals(userId)) {
+                return;
+            }
+            // 否则：必须是家族 admin
             FamilyMember m = familyMemberMapper.selectOne(
                 new LambdaQueryWrapper<FamilyMember>()
                     .eq(FamilyMember::getFamilyId, p.getFamilyId())
                     .eq(FamilyMember::getUserId, userId)
             );
             if (m == null || !"admin".equals(m.getRole())) {
-                throw new BusinessException(ResultCode.FORBIDDEN, "仅家族管理员可操作");
+                throw new BusinessException(ResultCode.FORBIDDEN, "仅家族管理员或项目创建者可操作");
             }
         } else {
             // 个人项目：Project.owner_id 校验

@@ -58,8 +58,9 @@ public class AuthorizationService {
     @Transactional
     public AuthorizationVO create(Long userId, Long projectId, AuthorizationCreateRequest req) {
         Project p = mustProject(projectId);
-        // 家族项目：admin 可发起；个人项目：owner 可发起
-        projectAccessChecker.requireOwner(projectId, userId);
+        // M11 Phase 3：发起授权改用 requireEditor（admin + editor 都能发起）
+        // 之前用 requireOwner（只有 admin）太严格，editor 创建了项目却无法发起授权
+        projectAccessChecker.requireEditor(projectId, userId);
         Subject s = mustSubject(req.getSubjectId());
         if (!s.getProjectId().equals(projectId)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "人物不属于该项目");

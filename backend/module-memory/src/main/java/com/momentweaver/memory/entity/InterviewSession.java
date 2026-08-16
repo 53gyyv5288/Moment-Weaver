@@ -51,6 +51,13 @@ public class InterviewSession {
     private LocalDateTime lastMessageAt;
     private LocalDateTime closedAt;
 
+    /**
+     * M11 Phase 3：启动 session 的用户 id。
+     *   - 非空：被采访者本人（用账号登录后点"开始采访"）
+     *   - NULL：公开 token 路径（老人没账号，用一次性 token 启动）
+     */
+    private Long startedByUserId;
+
     /** 采访摘要：标题、金句、关键时间点 */
     @Data
     @Builder

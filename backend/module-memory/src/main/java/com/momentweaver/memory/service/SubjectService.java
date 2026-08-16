@@ -73,11 +73,9 @@ public class SubjectService {
                 throw new BusinessException(ResultCode.FORBIDDEN,
                     "该成员不属于本项目所属家族");
             }
-            // 业务规则：不能把自己添加为被采访者（避免"自采访"怪事）
-            if (fm.getUserId() != null && fm.getUserId().equals(userId)) {
-                throw new BusinessException(ResultCode.BAD_REQUEST,
-                    "不能把自己添加为被采访者");
-            }
+            // M11 Phase 3：开放"自采访"（自传场景）
+            // 之前禁止把自己添加为被采访者（避免误操作），但个人传记场景需要
+            // 现在只在前端用下拉框的"我自己"标识区分，不在 service 强制禁止
             // 一个家族成员在同一项目下只能被添加一次
             Long dup = subjectMapper.selectCount(
                 new LambdaQueryWrapper<Subject>()

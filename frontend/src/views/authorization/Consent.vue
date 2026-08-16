@@ -4,7 +4,7 @@
  * 路由：/authz/:token
  */
 import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MarkdownIt from 'markdown-it'
 import consentMd from '@/assets/consent.md?raw'
@@ -16,7 +16,6 @@ import {
 } from '@/api/authorization'
 
 const route = useRoute()
-const router = useRouter()
 const token = computed(() => route.params.token as string)
 
 const authz = ref<AuthorizationVO | null>(null)
@@ -54,8 +53,12 @@ async function onGrant() {
   try {
     const { data } = await grantPublicAuthorization(token.value)
     if (data && data.code === 0) {
-      ElMessage.success('已同意，您可关闭此页面')
+      ElMessage.success('已同意')
       authz.value = data.data!
+      // 同意后停在当前页：
+      //   - 有账号的被采访者：采访官会从项目里点"代为采访"开始对话，你无需操作
+      //   - 没账号的被采访者：采访官会陪在身边开始对话
+      // 不自动跳转 —— 跳到首页会让用户丢失上下文且没有任何收益
     } else {
       ElMessage.error(data?.message || '操作失败')
     }

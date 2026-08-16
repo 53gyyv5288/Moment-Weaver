@@ -50,10 +50,15 @@ public class ProjectService {
             familyAccessChecker.requireEditor(familyId, userId);
         }
 
-        Long workspaceId = defaultWorkspaceIdOf(userId);
+        // 修复：家族项目不需要 workspace（管理员创建的成员账号也可能没 workspace）
+        // 个人项目必须用默认 workspace
+        Long workspaceId = null;
+        if (familyId == null) {
+            workspaceId = defaultWorkspaceIdOf(userId);
+        }
 
         Project p = new Project();
-        p.setWorkspaceId(workspaceId);
+        p.setWorkspaceId(workspaceId);  // 家族项目为 NULL（后端 select/写入都不依赖）
         p.setOwnerId(userId);
         p.setFamilyId(familyId);  // 可能为 null（个人项目）
         p.setType(req.getType());
@@ -63,7 +68,7 @@ public class ProjectService {
         p.setCreatedAt(LocalDateTime.now());
         p.setUpdatedAt(LocalDateTime.now());
         projectMapper.insert(p);
-        return toVO(p);
+        return toVO(p, userId);
     }
 
     /**
@@ -90,7 +95,7 @@ public class ProjectService {
         wrapper.orderByDesc(Project::getUpdatedAt);
 
         IPage<Project> p = projectMapper.selectPage(Page.of(page, size), wrapper);
-        List<ProjectVO> vos = p.getRecords().stream().map(this::toVO).toList();
+        List<ProjectVO> vos = p.getRecords().stream().map(proj -> toVO(proj, userId)).toList();
         return new PageResult<>(p.getTotal(), p.getCurrent(), p.getSize(), vos);
     }
 
@@ -105,7 +110,7 @@ public class ProjectService {
             // 个人项目：原 workspace 成员校验（兼容旧逻辑）
             ensureWorkspaceMember(p.getWorkspaceId(), userId);
         }
-        return toVO(p);
+        return toVO(p, userId);
     }
 
     @Transactional
@@ -145,7 +150,7 @@ public class ProjectService {
         }
         p.setUpdatedAt(LocalDateTime.now());
         projectMapper.updateById(p);
-        return toVO(p);
+        return toVO(p, userId);
     }
 
     // ---- helpers ----
@@ -179,6 +184,17 @@ public class ProjectService {
     }
 
     private ProjectVO toVO(Project p) {
+        return toVO(p, null);
+    }
+
+    /**
+     * M11 Phase 3：填充 myPermission 字段。
+     * <ul>
+     *   <li>家族项目：user 在 family_member 里的 role（admin/editor/viewer）</li>
+     *   <li>个人项目：null（前端按"个人项目"显示所有按钮）</li>
+     * </ul>
+     */
+    private ProjectVO toVO(Project p, Long userId) {
         ProjectVO vo = new ProjectVO();
         vo.setId(p.getId());
         vo.setWorkspaceId(p.getWorkspaceId());
@@ -190,6 +206,17 @@ public class ProjectService {
         vo.setStatus(p.getStatus());
         vo.setCreatedAt(p.getCreatedAt());
         vo.setUpdatedAt(p.getUpdatedAt());
+        // M11 Phase 3：算当前用户在该项目里的权限
+        if (userId != null && p.getFamilyId() != null) {
+            FamilyMember m = familyMemberMapper.selectOne(
+                new LambdaQueryWrapper<FamilyMember>()
+                    .eq(FamilyMember::getFamilyId, p.getFamilyId())
+                    .eq(FamilyMember::getUserId, userId)
+            );
+            if (m != null) {
+                vo.setMyPermission(m.getRole());
+            }
+        }
         return vo;
     }
 }

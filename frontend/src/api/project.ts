@@ -28,6 +28,12 @@ export interface ProjectVO {
   updatedAt: string
   /** M10+ Family：所属家族 ID（NULL=个人项目） */
   familyId?: string | null
+  /**
+   * M11 Phase 3：当前用户在该项目中的权限。
+   *   - 'admin' / 'editor' / 'viewer' 家族项目
+   *   - null 个人项目（前端按"未限权"显示所有按钮）
+   */
+  myPermission?: 'admin' | 'editor' | 'viewer' | null
 }
 
 export interface ProjectListQuery {

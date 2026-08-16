@@ -2,8 +2,9 @@
 /**
  * 项目详情：M2 阶段承载 Subject 列表 + 授权管理 + 启动采访。
  * M11 Phase 2：人物可从家族成员里选，或纯匿名（兼容老流程）。
+ * M11 Phase 3：按角色（admin/editor/viewer）控制按钮显隐。
  */
-import { onMounted, ref, computed, reactive } from 'vue'
+import { inject, onMounted, ref, computed, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Plus, ChatLineRound, Delete, Link, Edit, ArrowDown, User, UserFilled } from '@element-plus/icons-vue'
@@ -26,6 +27,9 @@ import { startInterview } from '@/api/interview'
 import AssetUploader from '@/views/asset/AssetUploader.vue'
 import AssetList from '@/views/asset/AssetList.vue'
 import { formatDateTime } from '@/utils/format'
+import { useProjectPermission } from '@/composables/useProjectPermission'
+import { useAuthStore } from '@/stores/auth'
+import type { ProjectVO } from '@/api/project'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,6 +37,19 @@ const projectId = computed(() => route.params.id as string)
 
 // 项目名称 / 类型 / 描述由 ProjectLayout 页头承担，本页只管人物 + 授权 + 素材
 const subjects = ref<SubjectVO[]>([])
+
+// M11 Phase 3：从 ProjectLayout 注入 project，按角色控制按钮
+const project = inject<import('vue').Ref<ProjectVO | null>>('project')!
+const { canEdit, canManage, isReadonly } = useProjectPermission(project)
+
+// M11 Phase 3：判断"我是不是被采访者本人"——只有本人能看到"开始采访"按钮
+const auth = useAuthStore()
+const currentUserId = computed(() => auth.user?.id ? String(auth.user.id) : null)
+// 被采访者本人判断：subject.linkedUserId == currentUserId
+const isSubjectSelf = (s: SubjectVO) =>
+  !!s.linkedUserId && !!currentUserId.value && String(s.linkedUserId) === currentUserId.value
+// 匿名 subject（没 linkedUserId）—— 没有"被采访者本人"概念，由 userA 代答
+const isAnonymousSubject = (s: SubjectVO) => !s.linkedUserId
 const authorizations = ref<AuthorizationVO[]>([])
 const loading = ref(false)
 
@@ -286,7 +303,9 @@ function loadAssets() {
           <span>被采访者 ({{ subjects.length }})</span>
         </template>
         <div class="pd__actions">
-          <el-button type="primary" :icon="Plus" @click="openAddSubject">添加人物</el-button>
+          <!-- M11 Phase 3：添加人物按钮仅 admin/editor 可见 -->
+          <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openAddSubject">添加人物</el-button>
+          <el-tag v-else-if="isReadonly" type="info" size="small">只读</el-tag>
         </div>
 
         <el-empty v-if="subjects.length === 0" description="还没有人物，先添加一个吧" />
@@ -325,24 +344,49 @@ function loadAssets() {
           </el-table-column>
           <el-table-column label="操作" width="240" align="right" fixed="right">
             <template #default="{ row }">
-              <el-button size="small" :icon="Link" @click="newAuthz.subjectId = row.id; showCreateAuthz = true">
+              <!-- M11 Phase 3：发起授权 admin + editor 都可见（后端 requireEditor 校验） -->
+              <el-button v-if="canEdit" size="small" :icon="Link" @click="newAuthz.subjectId = row.id; showCreateAuthz = true">
                 发起授权
               </el-button>
+              <!-- M11 Phase 3：采访按钮只对被采访者本人可见 -->
               <el-button
+                v-if="isSubjectSelf(row)"
                 size="small"
                 type="primary"
                 :icon="ChatLineRound"
                 :disabled="row.latestAuthStatus !== 'granted'"
                 @click="onStartInterview(row)"
               >
-                采访
+                开始采访
               </el-button>
-              <el-dropdown trigger="click" @command="(c: string) => c === 'edit' ? onOpenEditSubject(row) : onDeleteSubject(row)">
+              <!-- 代答模式：匿名 subject（没 linkedUserId）由 userA 在管理员/发起人视角代为采访。
+                   代答是高权力动作（产生的对话进入时间线、影响成稿），仅 admin/owner 可触发。 -->
+              <el-button
+                v-else-if="isAnonymousSubject(row) && canManage"
+                size="small"
+                type="primary"
+                :icon="ChatLineRound"
+                :disabled="row.latestAuthStatus !== 'granted'"
+                @click="onStartInterview(row)"
+              >
+                代为采访
+              </el-button>
+              <!-- M11 Phase 3：其他人（非被采访者）只能看提示；不能代为开始 -->
+              <el-tag
+                v-else-if="row.linkedUserId && row.latestAuthStatus === 'granted'"
+                size="small"
+                type="info"
+                effect="plain"
+              >
+                等待被采访者开始
+              </el-tag>
+              <!-- M11 Phase 3：编辑/删除按权限（编辑要 canEdit，删除要 canManage） -->
+              <el-dropdown v-if="canEdit" trigger="click" @command="(c: string) => c === 'edit' ? onOpenEditSubject(row) : onDeleteSubject(row)">
                 <el-button size="small" :icon="ArrowDown" />
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="edit" :icon="Edit">编辑</el-dropdown-item>
-                    <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
+                    <el-dropdown-item v-if="canManage" command="delete" :icon="Delete" divided>删除</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -384,8 +428,9 @@ function loadAssets() {
           <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
               <el-button v-if="row.publicUrl" size="small" :icon="CopyDocument" @click="copyUrl(row)">复制链接</el-button>
+              <!-- M11 Phase 3：撤销授权仅 admin 可见 -->
               <el-button
-                v-if="['pending', 'granted'].includes(row.status)"
+                v-if="canManage && ['pending', 'granted'].includes(row.status)"
                 size="small"
                 type="danger"
                 @click="onRevokeAuthz(row)"

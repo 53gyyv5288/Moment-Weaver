@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * 采访对话房间。M2 SSE 流式输出 + M3 摘要按钮 + M5+ 思考链面板。
+ * M11 Phase 3：区分"被采访者本人（能说话）"和"采访官（旁观）"。
  */
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -14,6 +15,7 @@ import {
   type InterviewEvidenceItem,
 } from '@/api/interview'
 import { summarizeSession } from '@/api/summary'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,6 +27,19 @@ const streaming = ref(false)
 const closing = ref(false)
 const regenerating = ref(false)
 const scroller = ref<HTMLElement | null>(null)
+
+// M11 Phase 3：判断当前用户是否能继续对话（基于后端返回的 canStream）
+//   - session.startedByUserId == null → 公开 token 创建，canStream=true
+//   - session.startedByUserId == currentUserId → 本人，canStream=true
+//   - 否则 → 采访官/旁观者，canStream=false
+const auth = useAuthStore()
+// 我们用 auth.user.id 仅作占位调试用；前端判断主要靠后端 canStream 字段
+const _currentUserId = computed(() => auth.user?.id ? String(auth.user.id) : '')
+const canStream = computed(() => {
+  if (!session.value) return false
+  return !!session.value.canStream
+})
+void _currentUserId  // 抑制 TS unused 警告
 
 // 思考链面板：实时累计当前流的 thinking，并控制哪些 idx 处于展开状态。
 // 流进行中：自动展开当前消息的面板；流结束：自动折叠。
@@ -94,6 +109,11 @@ function panelKey(idx: number): string {
 
 async function onSend() {
   if (!input.value.trim() || streaming.value) return
+  // M11 Phase 3：服务端 canStream 守卫
+  if (!canStream.value) {
+    ElMessage.warning('您没有在此采访对话的权限')
+    return
+  }
   const text = input.value.trim()
   input.value = ''
 
@@ -353,7 +373,8 @@ onMounted(load)
       </div>
     </main>
 
-    <footer class="ir__foot">
+    <!-- M11 Phase 3：被采访者本人能输入；采访官只能围观 -->
+    <footer class="ir__foot" v-if="canStream">
       <el-input
         v-model="input"
         type="textarea"
@@ -365,6 +386,13 @@ onMounted(load)
       <el-button type="primary" :loading="streaming" :disabled="!input.trim()" @click="onSend">
         发送
       </el-button>
+    </footer>
+    <footer class="ir__foot" v-else>
+      <el-alert type="info" :closable="false" show-icon>
+        <template #title>旁观模式</template>
+        您是项目成员，但不是本采访的"被采访者本人"，无法在此对话。
+        请等待被采访者（{{ session?.subjectDisplayName }}）开始采访。
+      </el-alert>
     </footer>
   </div>
 </template>

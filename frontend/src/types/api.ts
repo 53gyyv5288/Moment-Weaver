@@ -202,6 +202,12 @@ export interface InterviewSessionVO {
   startedAt?: string
   lastMessageAt?: string
   closedAt?: string
+  /** M11 Phase 3：启动 session 的用户 id（NULL=公开 token） */
+  startedByUserId?: string
+  /** M11 Phase 3：当前用户是否能进入采访房间说话（userB / 公开 token） */
+  canStream?: boolean
+  /** 结构化摘要（采访结束后生成） */
+  summary?: InterviewSummaryVO | null
 }
 
 // ============ M3 业务类型 ============
