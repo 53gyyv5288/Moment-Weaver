@@ -15,17 +15,15 @@ interface ProjectCreateForm {
   type: ProjectType
   name: string
   description: string
-  /** '' 表示个人项目（挂个人 workspace）；其他值是 family.id 字符串 */
+  /** 必选 family.id（不允许个人项目了） */
   familyId: string | number
 }
-
-const PERSONAL_SCOPE = '' as const
 
 const form = reactive<ProjectCreateForm>({
   type: 'family',
   name: '',
   description: '',
-  familyId: PERSONAL_SCOPE,
+  familyId: '',
 })
 
 const families = ref<FamilyVO[]>([])
@@ -36,6 +34,7 @@ const eligibleFamilies = computed(() => {
 
 const rules: FormRules = {
   type: [{ required: true, message: '请选择项目类型', trigger: 'change' }],
+  familyId: [{ required: true, message: '请选择家族', trigger: 'change' }],
   name: [
     { required: true, message: '请输入项目名', trigger: 'blur' },
     { min: 1, max: 128, message: '1-128 字', trigger: 'blur' },
@@ -50,6 +49,9 @@ async function loadFamilies() {
   const qFamilyId = route.query.familyId as string | undefined
   if (qFamilyId) {
     form.familyId = qFamilyId
+  } else if (eligibleFamilies.value.length > 0) {
+    // 默认选中第一个可用家族
+    form.familyId = eligibleFamilies.value[0].id
   }
 }
 
@@ -57,22 +59,22 @@ async function onSubmit() {
   if (!formRef.value) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
+  // 双重防御：未选家族直接拦下
+  if (!form.familyId) {
+    ElMessage.error('请先加入一个家族')
+    return
+  }
   submitting.value = true
   try {
     const { data } = await createProject({
       type: form.type,
       name: form.name.trim(),
       description: form.description.trim() || undefined,
-      familyId: form.familyId === PERSONAL_SCOPE ? null : form.familyId,
+      familyId: form.familyId,
     })
     if (data && data.code === 0) {
       ElMessage.success('项目已创建')
-      // 如果是从家族详情来的，跳回家族详情；否则跳项目列表
-      if (form.familyId && form.familyId !== PERSONAL_SCOPE) {
-        router.replace(`/families/${form.familyId}`)
-      } else {
-        router.replace('/projects')
-      }
+      router.replace(`/families/${form.familyId}`)
     }
   } finally {
     submitting.value = false
@@ -92,7 +94,6 @@ onMounted(loadFamilies)
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
         <el-form-item label="所属范围" prop="familyId">
           <el-radio-group v-model="form.familyId">
-            <el-radio-button :value="PERSONAL_SCOPE">个人项目</el-radio-button>
             <el-radio-button
               v-for="f in eligibleFamilies"
               :key="f.id"
@@ -102,17 +103,15 @@ onMounted(loadFamilies)
             </el-radio-button>
           </el-radio-group>
           <div class="form__hint">
-            <template v-if="form.familyId !== PERSONAL_SCOPE">
-              <strong style="color: #d97706">家族项目：</strong>
-              所有家族成员都能查看，{{ form.type === 'family' ? '可用于家族小传成稿' : '仅做个人时光胶囊' }}
-            </template>
-            <template v-else>
-              <strong>个人项目：</strong>只有您自己能看到（个人 workspace 下）
-            </template>
+            <strong style="color: #d97706">家族项目：</strong>
+            所有家族成员都能查看，{{ form.type === 'family' ? '可用于家族小传成稿' : '仅做个人时光胶囊' }}
           </div>
           <div v-if="families.length === 0" class="form__hint">
             您还没有加入任何家族。
             <el-link type="primary" @click="router.push('/families/new')">立即创建一个</el-link>
+          </div>
+          <div v-else-if="eligibleFamilies.length === 0" class="form__hint">
+            您所在的家族没有可创建项目的权限（仅家族 admin / editor 可创建项目）。
           </div>
         </el-form-item>
 

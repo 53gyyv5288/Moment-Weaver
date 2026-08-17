@@ -155,63 +155,6 @@ public class AuthorizationService {
         return toVO(a, buildPublicUrl(a.getToken()));
     }
 
-    /**
-     * M12+：个人项目「自己授权自己」专用。
-     * 仅 PersonalProjectBootstrapListener 调用，business 不开放。
-     *
-     * <p>不走 token、不发通知，直接插入 status="granted" 的 Authorization。
-     * familyMemberId / familyId 为 NULL（个人项目 → 不参与 V15 共享）。
-     * token 字段是占位（个人项目不暴露任何公开链接）。
-     */
-    @Transactional
-    public Long createSelfGrant(Long userId, Long projectId, Long subjectId) {
-        Subject s = mustSubject(subjectId);
-        if (!s.getProjectId().equals(projectId)) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "subject 不属于该项目");
-        }
-        Project p = mustProject(projectId);
-        if (p.getFamilyId() != null) {
-            throw new BusinessException(ResultCode.BAD_REQUEST,
-                "createSelfGrant 仅限个人项目（familyId == null）");
-        }
-        // 防重复：每个 subject 只应有一条 active 授权
-        Long existing = authorizationMapper.selectCount(
-            new LambdaQueryWrapper<Authorization>()
-                .eq(Authorization::getSubjectId, subjectId)
-                .in(Authorization::getStatus, "pending", "granted")
-        );
-        if (existing != null && existing > 0) {
-            log.warn("createSelfGrant: subjectId={} 已有 pending/granted 授权，跳过", subjectId);
-            Authorization existed = authorizationMapper.selectOne(
-                new LambdaQueryWrapper<Authorization>()
-                    .eq(Authorization::getSubjectId, subjectId)
-                    .in(Authorization::getStatus, "pending", "granted")
-                    .last("LIMIT 1")
-            );
-            return existed != null ? existed.getId() : null;
-        }
-
-        Authorization a = new Authorization();
-        a.setSubjectId(subjectId);
-        a.setProjectId(projectId);
-        a.setFamilyMemberId(null);  // 个人项目无 familyMember
-        a.setFamilyId(null);        // 个人项目 familyId 必为 null
-        // DB 约束：token NOT NULL → generateToken() 占位
-        // 个人项目 self-grant 永远不暴露公开链接（业务路径不查 publicUrl）
-        a.setToken(generateToken());
-        a.setScopes("interview,narrative,asset,share");
-        a.setStatus("granted");
-        LocalDateTime now = LocalDateTime.now();
-        a.setGrantedAt(now);
-        a.setCreatedAt(now);
-        a.setUpdatedAt(now);
-        // expiresAt 留空 = 永不过期（个人项目不引入 ttl 概念）
-        authorizationMapper.insert(a);
-        log.info("createSelfGrant: projectId={} subjectId={} authzId={} userId={}",
-            projectId, subjectId, a.getId(), userId);
-        return a.getId();
-    }
-
     public List<AuthorizationVO> listByProject(Long userId, Long projectId) {
         Project p = mustProject(projectId);
         projectAccessChecker.requireMember(projectId, userId);
