@@ -19,6 +19,7 @@ import com.momentweaver.memory.entity.Subject;
 import com.momentweaver.memory.mapper.AuthorizationMapper;
 import com.momentweaver.memory.mapper.SubjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SubjectService {
@@ -116,6 +118,62 @@ public class SubjectService {
 
         subjectMapper.insert(s);
         return toVO(s, null);
+    }
+
+    /**
+     * M12+：为个人项目 bootstrap 创建「我本人」subject。
+     * 仅 PersonalProjectBootstrapListener 调用，business 不开放。
+     *
+     * <p>关键点：
+     * <ul>
+     *   <li>linkedUserId = userId —— 让前端 isSubjectSelf 判定为 true（显示「开始采访」按钮）</li>
+     *   <li>relation 固定 "本人" —— UI 不显示编辑入口</li>
+     *   <li>familyMemberId = null —— 个人项目无 familyMember 关联</li>
+     *   <li>hasAccount = 1 —— 用户有账号</li>
+     *   <li>displayName 用传入值（默认用户昵称）</li>
+     * </ul>
+     */
+    @Transactional
+    public Long createForPersonalProject(Long userId, Long projectId, String displayName) {
+        Project p = mustProject(projectId);
+        // 防御性：仅个人项目可走此路径
+        if (p.getFamilyId() != null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                "createForPersonalProject 仅限个人项目");
+        }
+        // 防重复：个人项目应该只有 1 个"我本人"
+        Long existing = subjectMapper.selectCount(
+            new LambdaQueryWrapper<Subject>()
+                .eq(Subject::getProjectId, projectId)
+                .eq(Subject::getLinkedUserId, userId)
+        );
+        if (existing != null && existing > 0) {
+            log.warn("createForPersonalProject: projectId={} userId={} 已存在 subject，跳过",
+                projectId, userId);
+            // 返回已有的（找第一个）
+            Subject s = subjectMapper.selectOne(
+                new LambdaQueryWrapper<Subject>()
+                    .eq(Subject::getProjectId, projectId)
+                    .eq(Subject::getLinkedUserId, userId)
+                    .last("LIMIT 1")
+            );
+            return s != null ? s.getId() : null;
+        }
+
+        Subject s = new Subject();
+        s.setProjectId(projectId);
+        s.setDisplayName(displayName != null && !displayName.isBlank() ? displayName.trim() : "我本人");
+        s.setRelation("本人");
+        s.setHasAccount(1);
+        s.setLinkedUserId(userId);
+        s.setFamilyMemberId(null);
+        LocalDateTime now = LocalDateTime.now();
+        s.setCreatedAt(now);
+        s.setUpdatedAt(now);
+        subjectMapper.insert(s);
+        log.info("createForPersonalProject: projectId={} subjectId={} userId={}",
+            projectId, s.getId(), userId);
+        return s.getId();
     }
 
     public List<SubjectVO> list(Long userId, Long projectId) {

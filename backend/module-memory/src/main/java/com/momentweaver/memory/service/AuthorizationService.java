@@ -106,11 +106,30 @@ public class AuthorizationService {
         a.setFamilyId(p.getFamilyId());
         a.setToken(generateToken());
         a.setScopes(String.join(",", valid));
-        a.setStatus("pending");
         a.setConsentVersion(consentVersion);
         a.setExpiresAt(now.plusDays(ttl));
         a.setCreatedAt(now);
         a.setUpdatedAt(now);
+
+        // M12+：发起人 == 被采访者本人（自己授权自己）→ 静默 + 直接 granted
+        //   - 不发通知（没意义）
+        //   - 不生成公开 token（被采访者不需要走同意书链接）
+        //   - InterviewService.start 会通过 isProjectOwnerOrFamilyAdmin 旁路放行
+        boolean isSelfGrant = s.getLinkedUserId() != null
+            && s.getLinkedUserId().equals(userId);
+        if (isSelfGrant) {
+            a.setStatus("granted");
+            a.setGrantedAt(now);
+            authorizationMapper.insert(a);
+            // V15：同 familyMember 兄弟 subject 也跟着 granted
+            propagateGrantToSiblings(a);
+            log.info("authorization.created.self-grant: sid={} uid={} aid={}（不通知、不发 token）",
+                s.getId(), userId, a.getId());
+            return toVO(a, null);  // publicUrl=null
+        }
+
+        // 正常路径：被采访者是别人 → status=pending + 发通知 + 走 token 流程
+        a.setStatus("pending");
         authorizationMapper.insert(a);
 
         // M11 Phase 2：如果被采访者关联了家族成员账号，发布站内通知直达
@@ -134,6 +153,63 @@ public class AuthorizationService {
         }
 
         return toVO(a, buildPublicUrl(a.getToken()));
+    }
+
+    /**
+     * M12+：个人项目「自己授权自己」专用。
+     * 仅 PersonalProjectBootstrapListener 调用，business 不开放。
+     *
+     * <p>不走 token、不发通知，直接插入 status="granted" 的 Authorization。
+     * familyMemberId / familyId 为 NULL（个人项目 → 不参与 V15 共享）。
+     * token 字段是占位（个人项目不暴露任何公开链接）。
+     */
+    @Transactional
+    public Long createSelfGrant(Long userId, Long projectId, Long subjectId) {
+        Subject s = mustSubject(subjectId);
+        if (!s.getProjectId().equals(projectId)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "subject 不属于该项目");
+        }
+        Project p = mustProject(projectId);
+        if (p.getFamilyId() != null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                "createSelfGrant 仅限个人项目（familyId == null）");
+        }
+        // 防重复：每个 subject 只应有一条 active 授权
+        Long existing = authorizationMapper.selectCount(
+            new LambdaQueryWrapper<Authorization>()
+                .eq(Authorization::getSubjectId, subjectId)
+                .in(Authorization::getStatus, "pending", "granted")
+        );
+        if (existing != null && existing > 0) {
+            log.warn("createSelfGrant: subjectId={} 已有 pending/granted 授权，跳过", subjectId);
+            Authorization existed = authorizationMapper.selectOne(
+                new LambdaQueryWrapper<Authorization>()
+                    .eq(Authorization::getSubjectId, subjectId)
+                    .in(Authorization::getStatus, "pending", "granted")
+                    .last("LIMIT 1")
+            );
+            return existed != null ? existed.getId() : null;
+        }
+
+        Authorization a = new Authorization();
+        a.setSubjectId(subjectId);
+        a.setProjectId(projectId);
+        a.setFamilyMemberId(null);  // 个人项目无 familyMember
+        a.setFamilyId(null);        // 个人项目 familyId 必为 null
+        // DB 约束：token NOT NULL → generateToken() 占位
+        // 个人项目 self-grant 永远不暴露公开链接（业务路径不查 publicUrl）
+        a.setToken(generateToken());
+        a.setScopes("interview,narrative,asset,share");
+        a.setStatus("granted");
+        LocalDateTime now = LocalDateTime.now();
+        a.setGrantedAt(now);
+        a.setCreatedAt(now);
+        a.setUpdatedAt(now);
+        // expiresAt 留空 = 永不过期（个人项目不引入 ttl 概念）
+        authorizationMapper.insert(a);
+        log.info("createSelfGrant: projectId={} subjectId={} authzId={} userId={}",
+            projectId, subjectId, a.getId(), userId);
+        return a.getId();
     }
 
     public List<AuthorizationVO> listByProject(Long userId, Long projectId) {
@@ -301,13 +377,16 @@ public class AuthorizationService {
             if (existing != null && existing > 0) {
                 continue;
             }
-            // 新建 granted 记录（无 token —— 兄弟 subject 的 token 由它们自己的 create() 生成）
+            // 新建 granted 记录（占位 token——DB 约束 token NOT NULL，
+            //  业务上兄弟 subject 的 token 由它们自己的 create() 生成，
+            //  propagate 路径下此占位 token 永不被前端看到）
             LocalDateTime now = LocalDateTime.now();
             Authorization copy = new Authorization();
             copy.setSubjectId(sib.getId());
             copy.setProjectId(sib.getProjectId());
             copy.setFamilyMemberId(granted.getFamilyMemberId());
             copy.setFamilyId(granted.getFamilyId());
+            copy.setToken(generateToken());
             copy.setScopes(granted.getScopes());
             copy.setStatus("granted");
             copy.setConsentVersion(granted.getConsentVersion());
@@ -360,6 +439,8 @@ public class AuthorizationService {
     }
 
     private String buildPublicUrl(String token) {
+        // M12+：token 为 NULL 时（个人项目 self-grant / 自己授权自己）不返回 URL
+        if (token == null || token.isBlank()) return null;
         return publicBaseUrl.replaceAll("/+$", "") + "/authz/" + token;
     }
 

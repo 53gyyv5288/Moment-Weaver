@@ -31,18 +31,26 @@ public class InterviewMessageAppendedEvent extends ApplicationEvent {
     private final String turnId;
     private final List<InterviewMessage> appendedMessages;
     private final int startTurnIndex;
+    /** V15：subject 关联的 familyMember id（NULL=匿名 subject）。用于 RAG chunk 的跨 subject 共享。 */
+    private final Long familyMemberId;
+    /** V15：subject 关联 project 的 family id（NULL=个人项目）。用于 RAG chunk 的跨 family 隔离。 */
+    private final Long familyId;
 
     public InterviewMessageAppendedEvent(Object source,
                                          String subjectId,
                                          String sessionId,
                                          String turnId,
                                          List<InterviewMessage> appendedMessages,
-                                         int startTurnIndex) {
+                                         int startTurnIndex,
+                                         Long familyMemberId,
+                                         Long familyId) {
         super(source);
         this.subjectId = subjectId;
         this.sessionId = sessionId;
         this.turnId = turnId;
         this.appendedMessages = appendedMessages == null ? List.of() : List.copyOf(appendedMessages);
         this.startTurnIndex = Math.max(0, startTurnIndex);
+        this.familyMemberId = familyMemberId;
+        this.familyId = familyId;
     }
 }

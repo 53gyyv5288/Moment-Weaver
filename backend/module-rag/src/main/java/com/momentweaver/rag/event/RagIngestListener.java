@@ -37,7 +37,9 @@ public class RagIngestListener {
             boolean ok = ragIngestService.ingestInterviewSession(
                 e.getSubjectId(), e.getSessionId(),
                 e.getTurnId(),
-                e.getAppendedMessages(), e.getStartTurnIndex());
+                e.getAppendedMessages(), e.getStartTurnIndex(),
+                // V15：跨 subject 共享 + 跨 family 隔离的 family 字段透传
+                e.getFamilyMemberId(), e.getFamilyId());
             log.debug("RAG ingest for session {} turn={} (appended={}, startTurnIndex={}): {}",
                 e.getSessionId(), e.getTurnId(),
                 e.getAppendedMessages().size(),

@@ -50,8 +50,19 @@ const isSubjectSelf = (s: SubjectVO) =>
   !!s.linkedUserId && !!currentUserId.value && String(s.linkedUserId) === currentUserId.value
 // 匿名 subject（没 linkedUserId）—— 没有"被采访者本人"概念，由 userA 代答
 const isAnonymousSubject = (s: SubjectVO) => !s.linkedUserId
+// M12+：个人项目（familyId == null）—— UI 极简，只有"开始采访"按钮
+//  个人项目创建时已自动生成 "我本人" subject + 自授权 granted（后端事件 bootstrap）
+const isPersonal = computed(() => !project.value?.familyId)
+// 个人项目下，找到那个"我本人"subject（linkedUserId == currentUserId）
+const meSubject = computed(() =>
+  isPersonal.value
+    ? subjects.value.find(s => isSubjectSelf(s)) ?? null
+    : null
+)
 const authorizations = ref<AuthorizationVO[]>([])
 const loading = ref(false)
+/** M12+：个人项目"开始采访"按钮 loading 态 */
+const starting = ref(false)
 
 // ============ M11 Phase 2：添加人物（Tab 形式）============
 const showAddSubject = ref(false)
@@ -276,15 +287,20 @@ async function onStartInterview(s: SubjectVO) {
     ElMessage.warning('该人物尚未同意授权，无法开始采访')
     return
   }
-  const { data } = await startInterview({
-    projectId: projectId.value,
-    subjectId: s.id,
-    authorizationId: s.latestAuthId,
-  })
-  if (data && data.code === 0 && data.data) {
-    router.push(`/interview/${data.data.id}`)
-  } else {
-    ElMessage.error(data?.message || '启动失败')
+  starting.value = true
+  try {
+    const { data } = await startInterview({
+      projectId: projectId.value,
+      subjectId: s.id,
+      authorizationId: s.latestAuthId,
+    })
+    if (data && data.code === 0 && data.data) {
+      router.push(`/interview/${data.data.id}`)
+    } else {
+      ElMessage.error(data?.message || '启动失败')
+    }
+  } finally {
+    starting.value = false
   }
 }
 
@@ -296,7 +312,34 @@ function loadAssets() {
 
 <template>
   <div class="pd" v-loading="loading">
-    <el-tabs>
+    <!-- ============== 个人项目：极简 UI ============== -->
+    <div v-if="isPersonal" class="pd__personal">
+      <el-card shadow="never" class="pd__personal-card">
+        <h2 class="pd__personal-title">开始你的个人采访</h2>
+        <p class="pd__personal-subtitle">
+          AI 采访官会以温暖、有耐心、尊重长辈的态度，引导你回忆你的人生。
+        </p>
+        <el-button
+          v-if="meSubject"
+          type="primary"
+          size="large"
+          :icon="ChatLineRound"
+          :loading="starting"
+          @click="onStartInterview(meSubject)"
+        >
+          开始采访
+        </el-button>
+        <div v-else class="muted pd__personal-loading">
+          正在为你准备采访空间…
+        </div>
+        <p v-if="meSubject" class="pd__personal-hint muted">
+          被采访者：<strong>{{ meSubject.displayName }}</strong>（{{ meSubject.relation }}）
+        </p>
+      </el-card>
+    </div>
+
+    <!-- ============== 家族项目：原 tabs UI ============== -->
+    <el-tabs v-else>
       <!-- ============== 人物 ============== -->
       <el-tab-pane label="被采访者">
         <template #label>
@@ -612,4 +655,12 @@ function loadAssets() {
 .muted { color: var(--mw-text-muted); }
 .pd__subjName { display: inline-flex; align-items: center; gap: 6px; }
 .fm__name { display: inline-flex; align-items: center; gap: 6px; }
+
+/* M12+：个人项目极简 UI */
+.pd__personal { max-width: 640px; margin: 24px auto; }
+.pd__personal-card { padding: 16px 8px; text-align: center; }
+.pd__personal-title { font-size: 22px; font-weight: 500; color: var(--mw-text, #1f2937); margin: 0 0 8px; }
+.pd__personal-subtitle { color: var(--mw-text-muted, #6b7280); margin: 0 0 24px; line-height: 1.6; }
+.pd__personal-loading { padding: 24px 0; }
+.pd__personal-hint { margin-top: 16px; font-size: 13px; }
 </style>

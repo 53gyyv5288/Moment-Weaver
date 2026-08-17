@@ -101,6 +101,14 @@ public class InterviewService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "人物不属于该项目");
         }
 
+        // 授权跳过场景：被采访者是本人 + 本人是项目 owner/admin
+        //   例如：家族 admin 把"自己"加为 subject，想"自传式采访"
+        //   管理员采访自己不需要走正式同意书（自己同意自己没有意义）
+        boolean isSelfAdminInterview =
+            s.getLinkedUserId() != null
+            && s.getLinkedUserId().equals(userId)
+            && projectAccessChecker.isProjectOwnerOrFamilyAdmin(p, userId);
+
         if (s.getLinkedUserId() != null) {
             // 路径 1：被采访者有账号 → 只有本人能启动
             // 入口先校验"我是项目成员"以防越权探测别人的 subject
@@ -116,7 +124,17 @@ public class InterviewService {
         }
 
         Authorization authz;
-        if (req.getAuthorizationId() != null) {
+        if (isSelfAdminInterview) {
+            // owner/admin 采访自己：跳过授权检查
+            // 用一个虚拟 Authorization 走通后续代码路径（session.requiresAuthzId 仍写入但无业务作用）
+            authz = new Authorization();
+            authz.setId(0L);
+            authz.setSubjectId(s.getId());
+            authz.setProjectId(p.getId());
+            authz.setStatus("granted");
+            log.info("Self-admin interview: sid={} uid={} projectId={} 跳过授权检查",
+                s.getId(), userId, p.getId());
+        } else if (req.getAuthorizationId() != null) {
             authz = mustAuth(req.getAuthorizationId());
             if (!authz.getProjectId().equals(p.getId()) || !authz.getSubjectId().equals(s.getId())) {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "授权与人物/项目不匹配");
@@ -149,6 +167,10 @@ public class InterviewService {
         //   - 路径 2（userA 代答）：等于 userA
         //   streamMessage / canStream 都按"userId == startedByUserId"校验，两路一致
         sess.setStartedByUserId(userId);
+        // V15：把 family 字段存到 session（异步 ingest 事件时直接读 sess 取值）
+        //  避免闭包捕获 Subject 引用（start 异步返回后 s 变量已不可用）
+        sess.setFamilyMemberId(s.getFamilyMemberId());
+        sess.setFamilyId(p.getFamilyId());
 
         LocalDateTime now = LocalDateTime.now();
         sess.setStartedAt(now);
@@ -385,7 +407,10 @@ public class InterviewService {
                 // 触发 RAG ingest：本轮 user + assistant 都进 Milvus（AFTER_COMMIT）
                 try {
                     eventPublisher.publishEvent(new InterviewMessageAppendedEvent(
-                        this, sess.getSubjectId(), sessionId, turnId, appendedThisTurn, startTurnIndex));
+                        this, sess.getSubjectId(), sessionId, turnId, appendedThisTurn, startTurnIndex,
+                        // V15：family 字段从 session 读（start() 异步返回后 Subject 引用已不可用）
+                        sess.getFamilyMemberId(),
+                        sess.getFamilyId()));
                 } catch (Exception ex) {
                     log.warn("publish InterviewMessageAppendedEvent failed: {}", ex.toString());
                 }

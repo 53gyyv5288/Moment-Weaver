@@ -9,14 +9,19 @@ import com.momentweaver.account.dto.ProjectVO;
 import com.momentweaver.account.entity.FamilyMember;
 import com.momentweaver.account.entity.Project;
 import com.momentweaver.account.entity.WorkspaceMember;
+import com.momentweaver.account.entity.User;
 import com.momentweaver.account.mapper.FamilyMemberMapper;
 import com.momentweaver.account.mapper.ProjectMapper;
+import com.momentweaver.account.mapper.UserMapper;
 import com.momentweaver.account.mapper.WorkspaceMemberMapper;
 import com.momentweaver.account.security.FamilyAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.PageResult;
 import com.momentweaver.common.ResultCode;
+import com.momentweaver.common.event.ProjectCreatedEvent;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +29,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProjectService {
@@ -32,6 +38,10 @@ public class ProjectService {
     private final WorkspaceMemberMapper workspaceMemberMapper;
     private final FamilyMemberMapper familyMemberMapper;
     private final FamilyAccessChecker familyAccessChecker;
+    /** M12+：取用户昵称用作个人项目默认 subject.displayName */
+    private final UserMapper userMapper;
+    /** M12+：发 ProjectCreatedEvent（个人项目 bootstrap 用） */
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 创建项目（兼容 + 扩展）：
@@ -68,6 +78,20 @@ public class ProjectService {
         p.setCreatedAt(LocalDateTime.now());
         p.setUpdatedAt(LocalDateTime.now());
         projectMapper.insert(p);
+
+        // M12+：个人项目（familyId == null）→ 发 ProjectCreatedEvent，
+        // PersonalProjectBootstrapListener 自动建"我本人"subject + 自授权 granted 记录
+        if (familyId == null) {
+            String displayName = null;
+            User u = userMapper.selectById(userId);
+            if (u != null && u.getDisplayName() != null && !u.getDisplayName().isBlank()) {
+                displayName = u.getDisplayName();
+            }
+            eventPublisher.publishEvent(new ProjectCreatedEvent(
+                userId, p.getId(), p.getFamilyId(), displayName));
+            log.info("Project created (personal): projectId={} ownerId={}", p.getId(), userId);
+        }
+
         return toVO(p, userId);
     }
 

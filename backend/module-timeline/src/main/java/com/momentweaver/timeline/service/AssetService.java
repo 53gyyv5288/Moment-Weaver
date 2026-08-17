@@ -301,6 +301,18 @@ public class AssetService {
 
     /** Asset → AssetSnapshot：用于跨模块事件传递，避免 module-rag 反向依赖 module-timeline。 */
     private AssetSnapshot toSnapshot(Asset a) {
+        // V15：查 subject.familyMemberId + project.familyId 一起塞进 snapshot
+        //   RAG ingest 端会用这俩字段做跨 subject 共享 + 跨 family 隔离
+        Long familyMemberId = null;
+        Long familyId = null;
+        if (a.getSubjectId() != null) {
+            Subject s = subjectMapper.selectById(a.getSubjectId());
+            if (s != null) familyMemberId = s.getFamilyMemberId();
+        }
+        if (a.getProjectId() != null) {
+            Project p = projectMapper.selectById(a.getProjectId());
+            if (p != null) familyId = p.getFamilyId();
+        }
         return new AssetSnapshot(
             a.getId(),
             a.getSubjectId(),
@@ -308,7 +320,9 @@ public class AssetService {
             a.getCaption(),
             a.getOriginalName(),
             a.getOssKey(),
-            a.getTakenAt()
+            a.getTakenAt(),
+            familyMemberId,
+            familyId
         );
     }
 

@@ -58,6 +58,11 @@ public class InterviewSession {
      */
     private Long startedByUserId;
 
+    /** V15：subject 关联 familyMember id（NULL=匿名 subject）。用于 RAG chunk 跨 subject 共享授权。 */
+    private Long familyMemberId;
+    /** V15：subject 关联 project 的 family id（NULL=个人项目）。用于 RAG chunk 跨 family 隔离。 */
+    private Long familyId;
+
     /** 采访摘要：标题、金句、关键时间点 */
     @Data
     @Builder

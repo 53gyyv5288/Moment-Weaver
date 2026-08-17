@@ -96,6 +96,22 @@ public class ProjectAccessChecker {
         }
     }
 
+    /**
+     * M12+：判断 userId 是否为项目的 owner 或 family admin（不抛异常）。
+     * 用于 InterviewService 旁路判断：owner-admin 采访自己跳过授权检查。
+     */
+    public boolean isProjectOwnerOrFamilyAdmin(Project p, Long userId) {
+        if (p == null || userId == null) return false;
+        if (p.getOwnerId().equals(userId)) return true;  // 任何项目的 owner 都算
+        if (p.getFamilyId() == null) return false;       // 个人项目只看 owner
+        FamilyMember m = familyMemberMapper.selectOne(
+            new LambdaQueryWrapper<FamilyMember>()
+                .eq(FamilyMember::getFamilyId, p.getFamilyId())
+                .eq(FamilyMember::getUserId, userId)
+        );
+        return m != null && "admin".equals(m.getRole());
+    }
+
     // ---- helpers ----
 
     private Project mustProject(Long projectId) {

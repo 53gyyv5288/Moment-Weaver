@@ -42,7 +42,9 @@ public class RagIngestService {
     public boolean ingestInterviewSession(String subjectId, String sessionId,
                                           String turnId,
                                           List<InterviewMessage> messages,
-                                          int startTurnIndex) {
+                                          int startTurnIndex,
+                                          Long familyMemberId,
+                                          Long familyId) {
         if (messages == null || messages.isEmpty()) return false;
         // chunk_id 规则与 AI 端 chunker.interview_chunks 对齐：
         //   interview:{session_id}:turn_{turnId}（UUID 稳定）
@@ -82,6 +84,12 @@ public class RagIngestService {
                 md.put("role", "user+assistant");
                 md.put("turn_index", turnIndex);
                 if (msgTurnId != null) md.put("turn_id", msgTurnId);
+                // V15：family 字段透传给 AI 端 _interview_row，最终写到 Milvus chunk
+                //   - family_id: NULL=个人项目；非空=家族项目（用于跨 family 隔离）
+                //   - family_member_id: NULL=匿名 subject；非空=关联家族成员（用于同 familyMember 跨 subject 共享）
+                //   - AI 端 _interview_row 读 metadata 拿不到时回退到 0（兼容老调用方）
+                if (familyId != null) md.put("family_id", familyId);
+                if (familyMemberId != null) md.put("family_member_id", familyMemberId);
                 long ts = m.getCreatedAt() == null
                     ? System.currentTimeMillis()
                     : m.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
@@ -166,6 +174,9 @@ public class RagIngestService {
             ? 0L
             : asset.takenAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
         md.put("file_url", fileUrl);
+        // V15：family 字段透传给 AI 端 _asset_row
+        if (asset.familyId() != null) md.put("family_id", asset.familyId());
+        if (asset.familyMemberId() != null) md.put("family_member_id", asset.familyMemberId());
 
         IngestRequest.ChunkUpsert chunk = new IngestRequest.ChunkUpsert(
             "asset:" + asset.id() + ":v1",
