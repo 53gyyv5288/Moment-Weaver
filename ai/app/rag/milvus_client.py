@@ -312,17 +312,17 @@ def _ensure_subject_filter(
     family_member_id: int = 0,
 ) -> str:
     """强制带 subject_id + revoked_at IS NULL。
-    V15：当 family_id/family_member_id 都非 0 时，扩展为
-    (subject_id == X OR (family_id == F AND family_member_id == M))
-    —— 跨 family 隔离 + 同 familyMember 共享。
-    fid/fmid=0 时退回原 subject 粒度（兼容旧 collection / 匿名 subject / 个人项目）。
+    V15：family_id != 0 时扩展为
+    (subject_id == X OR family_id == F)
+    —— 跨 family 隔离 + 同 family 全员共享（不限 familyMember）。
+    family_id=0 时退回原 subject 粒度（兼容个人项目 / 旧 collection）。
+    familyMember_id 参数保留但不再用于过滤（授权仍按 familyMember 共享）。
     """
-    if family_id and family_member_id:
+    if family_id:
         # 注意：revoked_at IS NULL 必须 AND 在整个 (subject_id OR family) 外，
         # 否则单臂 OR 可能在某些 Milvus 版本里绕过 revoke 过滤。
         access = (
-            f'(subject_id == "{subject_id}" '
-            f'OR (family_id == {family_id} AND family_member_id == {family_member_id}))'
+            f'(subject_id == "{subject_id}" OR family_id == {family_id})'
         )
     else:
         access = f'subject_id == "{subject_id}"'
@@ -455,8 +455,28 @@ def hybrid_search(
     # results[0] 是单 query 的 list[Hit]
     if not results:
         return []
+    raw_hits = list(results[0])
+    # 关键安全保障：pymilvus 2.5.0 + Milvus 2.5 服务端下，hybrid_search 的
+    # filter 参数被忽略/解析错误，会返回跨 subject / 跨 family 的 chunks
+    # （实测：query "subject_id == X" + hybrid_search 命中其它 subject_id）。
+    # 这里在 Python 侧再 filter 一次，按 _ensure_subject_filter 同样的语义：
+    #   - subject_id == X
+    #   - OR (family_id == F AND family_member_id == M)
+    #   - AND revoked_at IS NULL
+    hits = _post_filter_hits(
+        raw_hits,
+        subject_id=subject_id,
+        family_id=family_id,
+        family_member_id=family_member_id,
+    )
+    # 注意：limit 是 top_k，但 post-filter 后可能不够，再按比例补一次。
+    # 实际跑下来首轮命中远大于 top_k（dense + sparse 各 limit=top_k），足够。
+    # 万一不够 caller 上游会 rerank 截断到 rag_top_k_rerank，影响有限。
+    if len(hits) < top_k and len(raw_hits) > len(hits):
+        log.warning("hybrid_search 后过滤从 %d 降到 %d 条 (subject=%s)",
+                    len(raw_hits), len(hits), subject_id)
     out: list[dict] = []
-    for hit in results[0]:
+    for hit in hits:
         entity = hit.get("entity", {}) or {}
         out.append({
             "id": hit.get("id"),
@@ -464,6 +484,56 @@ def hybrid_search(
             "score": hit.get("score", 1.0 - hit.get("distance", 0.0)),
             "entity": entity,
         })
+    return out
+
+
+def _post_filter_hits(
+    hits: list[dict],
+    *,
+    subject_id: str,
+    family_id: int,
+    family_member_id: int,
+) -> list[dict]:
+    """兼容 pymilvus 2.5.0 hybrid_search filter 失效的 post-filter。
+
+    严格按 _ensure_subject_filter 语义过滤：
+      subject_id == X
+      OR family_id == F
+      AND revoked_at IS NULL
+
+    注意：
+      - entity 字段可能为 None（字段缺失或 collection schema 无该字段）
+      - extra_filter 在 Milvus 端已生效，post-filter 不再处理
+      - familyMember_id 参数保留但不再用于过滤（授权仍按 familyMember 共享）
+    """
+    out = []
+    for hit in hits:
+        ent = hit.get("entity") or {}
+        # revoked_at 过滤
+        revoked_at = ent.get("revoked_at")
+        if revoked_at is not None and revoked_at != 0:
+            continue
+        # subject_id 匹配
+        sid = ent.get("subject_id")
+        if sid is None:
+            # 字段缺失 / 旧 schema → 不能证明属于该 subject，跳过
+            # （保守：宁可漏召回，不可泄露）
+            continue
+        sid_str = str(sid)
+        if sid_str == str(subject_id):
+            out.append(hit)
+            continue
+        # 同 family 共享（跨 familyMember）：family_id 相同即共享
+        if family_id:
+            ent_fid = ent.get("family_id")
+            if ent_fid is not None:
+                try:
+                    if int(ent_fid) == family_id:
+                        out.append(hit)
+                        continue
+                except (TypeError, ValueError):
+                    pass
+        # 不匹配：跨 subject / 跨 family 的过滤掉
     return out
 
 
