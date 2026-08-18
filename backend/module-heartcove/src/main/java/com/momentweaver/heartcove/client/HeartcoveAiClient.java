@@ -71,6 +71,55 @@ public class HeartcoveAiClient {
         }
     }
 
+    /**
+     * 调用 /api/v1/heartcove/persona-summary, 一次性生成 subject 的人格摘要(M14+ 体验修复)。
+     *
+     * <p>设计: enable 接口在主事务提交后 fire-and-forget 调这个端点; LLM 失败 / 输入为空
+     * 时返回 fallback=true, Java 端决定是否写库。</p>
+     *
+     * @param quoteChunks 来自 MongoDB interview_message 中 role=user 的发言片段
+     * @return [persona_summary, fallback]
+     */
+    public PersonaSummaryResult buildPersonaSummary(String subjectId, String displayName,
+                                                    String ageHint, String relation,
+                                                    List<Map<String, String>> quoteChunks,
+                                                    String previousSummary) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("subject_id", subjectId);
+        body.put("display_name", displayName);
+        body.put("age_hint", ageHint);
+        body.put("relation", relation);
+        body.put("quote_chunks", quoteChunks);
+        body.put("previous_summary", previousSummary == null ? "" : previousSummary);
+        try {
+            Map resp = aiWebClient.post()
+                .uri("/api/v1/heartcove/persona-summary")
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .block(Duration.ofSeconds(90));   // 抽取 300-500 字摘要, LLM 通常 10-30s
+            if (resp == null) {
+                log.warn("persona-summary returned null (subject={})", subjectId);
+                return new PersonaSummaryResult(_FALLBACK_SUMMARY, true);
+            }
+            Object s = resp.get("persona_summary");
+            Object fb = resp.get("fallback");
+            String text = s == null ? _FALLBACK_SUMMARY : s.toString();
+            boolean fallback = fb instanceof Boolean ? (Boolean) fb : false;
+            return new PersonaSummaryResult(text, fallback);
+        } catch (Exception e) {
+            log.warn("persona-summary failed (subject={}): {}", subjectId, e.toString());
+            return new PersonaSummaryResult(_FALLBACK_SUMMARY, true);
+        }
+    }
+
+    /** 默认模板: 与 Python 侧 _DEFAULT_PERSONA_TEMPLATE 保持一致 */
+    private static final String _FALLBACK_SUMMARY =
+        "暂无既往采访内容可用;按温和长辈的基本形象应对,被问到具体经历时坦诚说自己记不清、请对方讲讲。";
+
+    /** persona_summary 调用的返回值封装 */
+    public record PersonaSummaryResult(String personaSummary, boolean fallback) {}
+
     // ---- request body ----
 
     @Data

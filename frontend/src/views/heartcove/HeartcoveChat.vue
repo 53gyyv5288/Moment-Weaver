@@ -33,6 +33,17 @@ const scrollRef = ref<HTMLDivElement | null>(null)
 
 // 临时缓冲：流式追加的 token 拼到这一条
 const streamingMsg = ref<HeartcoveMessageVO | null>(null)
+// M14+: 当前正在流式接收的 AI 思考过程(仅展示,不持久化)
+const streamingThinking = ref('')
+// 用户展开/折叠"思考过程"面板 (默认折叠)
+const thinkingCollapsed = ref(true)
+// M14+: 每条 AI 消息的 evidence 展开状态, key 是 m.id 或 m.createdAt(本地占位消息没 id)
+const evidenceExpanded = reactive<Record<string, boolean>>({})
+
+function toggleEvidence(m: HeartcoveMessageVO) {
+  const k = m.id || m.createdAt
+  evidenceExpanded[k] = !evidenceExpanded[k]
+}
 
 async function loadOrCreate() {
   try {
@@ -81,6 +92,8 @@ async function send() {
   streaming.value = true
   const controller = new AbortController()
   abortRef.value = controller
+  streamingThinking.value = ''  // 每次新消息清空
+  thinkingCollapsed.value = true  // 默认折叠
 
   try {
     await streamHeartcoveChat(
@@ -91,6 +104,11 @@ async function send() {
           aiMsg.content += tok
           scrollToBottom()
         },
+        onThinking: (tok) => {
+          // 推理模型的思考链;非推理模型不会触发
+          streamingThinking.value += tok
+          scrollToBottom()
+        },
         onMeta: (meta) => {
           if (meta.unknownType) aiMsg.unknownType = meta.unknownType
           if (meta.sourceQuoteIds) aiMsg.sourceMessageIds = JSON.stringify(meta.sourceQuoteIds)
@@ -99,6 +117,8 @@ async function send() {
           ElMessage.error(msg || 'AI 出错了')
         },
         onDone: () => {
+          // M14+: 抽取 <<EVIDENCE>>...<<END>> 段, 剥离到 evidence 字段, 不污染 content
+          extractAndStripEvidence(aiMsg)
           streamingMsg.value = null
           streaming.value = false
         },
@@ -112,12 +132,45 @@ async function send() {
   } finally {
     streaming.value = false
     streamingMsg.value = null
+    streamingThinking.value = ''  // 流结束清空
     abortRef.value = null
   }
 }
 
 function stop() {
   abortRef.value?.abort()
+}
+
+/**
+ * M14+: 从 LLM 完整回复中抽出 <<EVIDENCE>>...<<END>> 段。
+ *
+ * <p>LLM 在 prompt 指引下, 引用了【最相关的 5 条采访原话】时会输出:
+ *   ...正文...\n<<EVIDENCE>>\n- 引用 1: ...\n- 引用 2: ...\n<<END>>
+ *
+ * <p>前端把 evidence 段剥离 (不再展示给用户), evidence 列表放到 aiMsg.evidence
+ * 供"AI 引用了 N 条"按钮展开。本期不持久化(后端 HeartcoveMessage 没有此字段)。</p>
+ */
+const EVIDENCE_RE = /<<EVIDENCE>>\s*([\s\S]*?)\s*<<END>>/
+const EVIDENCE_LINE_RE = /^[\s*\-•]*\s*(?:引用\s*\d+\s*[:：]?|[-•])\s*(.+)$/
+
+function extractAndStripEvidence(msg: HeartcoveMessageVO) {
+  const m = EVIDENCE_RE.exec(msg.content)
+  if (!m) return
+  const block = m[1]
+  const lines = block.split(/\n+/).map(l => l.trim()).filter(Boolean)
+  const quotes: string[] = []
+  for (const line of lines) {
+    const lm = EVIDENCE_LINE_RE.exec(line)
+    if (lm && lm[1]) {
+      const q = lm[1].trim()
+      if (q && q.length <= 200) quotes.push(q)
+    }
+  }
+  if (quotes.length > 0) {
+    msg.evidence = quotes
+  }
+  // 剥离 EVIDENCE 段 (含前面可能有的空行)
+  msg.content = msg.content.replace(/\s*<<EVIDENCE>>[\s\S]*?<<END>>\s*$/, '')
 }
 
 async function onClose() {
@@ -185,9 +238,38 @@ onUnmounted(() => abortRef.value?.abort())
         >
           <div class="hc-chat__bubble">
             <div class="hc-chat__content">{{ m.content }}</div>
+            <!-- M14+: 推理模型思考过程,默认折叠,仅当正在流式且有内容时显示 -->
+            <div
+              v-if="streaming && streamingMsg === m && streamingThinking"
+              class="hc-chat__thinking"
+            >
+              <button
+                type="button"
+                class="hc-chat__thinking-toggle"
+                @click="thinkingCollapsed = !thinkingCollapsed"
+              >
+                <span class="hc-chat__thinking-icon">🧠</span>
+                <span>{{ thinkingCollapsed ? '查看思考过程' : '收起思考过程' }}</span>
+                <span class="hc-chat__thinking-len">{{ streamingThinking.length }} 字</span>
+              </button>
+              <pre v-if="!thinkingCollapsed" class="hc-chat__thinking-body">{{ streamingThinking }}<span class="hc-chat__cursor">▍</span></pre>
+            </div>
             <div class="hc-chat__foot" v-if="m.role === 'ai'">
               <span class="hc-chat__tag">AI 生成 · 基于采访素材</span>
               <span class="hc-chat__time">{{ formatDateTime(m.createdAt) }}</span>
+            </div>
+            <!-- M14+: AI 引用了 N 条原话 (流式期间 evidence 字段非空时显示) -->
+            <div v-if="m.role === 'ai' && m.evidence && m.evidence.length > 0" class="hc-chat__evidence">
+              <button type="button" class="hc-chat__evidence-toggle" @click="toggleEvidence(m)">
+                <span class="hc-chat__evidence-icon">📖</span>
+                <span>AI 引用了 {{ m.evidence.length }} 条原话</span>
+                <span class="hc-chat__evidence-arrow">{{ evidenceExpanded[m.id || m.createdAt] ? "▾" : "▸" }}</span>
+              </button>
+              <ul v-if="evidenceExpanded[m.id || m.createdAt]" class="hc-chat__evidence-list">
+                <li v-for="(q, i) in m.evidence" :key="i" class="hc-chat__evidence-item">
+                  <span class="hc-chat__evidence-quote">「{{ q }}」</span>
+                </li>
+              </ul>
             </div>
             <div class="hc-chat__foot" v-else>
               <span class="hc-chat__time">{{ formatDateTime(m.createdAt) }}</span>
@@ -391,5 +473,103 @@ onUnmounted(() => abortRef.value?.abort())
   color: var(--mw-text-muted);
   margin-right: auto;
   font-style: italic;
+}
+
+/* M14+: AI 引用了 N 条原话 */
+.hc-chat__evidence {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.hc-chat__evidence-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(217, 119, 6, 0.06);
+  border: 1px solid #ece2cf;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--mw-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+}
+.hc-chat__evidence-toggle:hover {
+  background: rgba(217, 119, 6, 0.12);
+}
+.hc-chat__evidence-icon {
+  font-size: 12px;
+}
+.hc-chat__evidence-arrow {
+  font-size: 10px;
+  color: var(--mw-text-muted);
+}
+.hc-chat__evidence-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  border-left: 2px solid #ece2cf;
+}
+.hc-chat__evidence-item {
+  padding: 4px 0 4px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--mw-text-secondary);
+}
+.hc-chat__evidence-quote {
+  font-family: 'Songti SC', 'STSong', 'SimSun', serif;
+}
+
+/* M14+: 推理模型思考过程面板 */
+.hc-chat__thinking {
+  margin-top: 10px;
+  border-top: 1px dashed #ece2cf;
+  padding-top: 8px;
+  font-size: 12px;
+  color: var(--mw-text-muted);
+}
+.hc-chat__thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(217, 119, 6, 0.06);
+  border: 1px solid #ece2cf;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--mw-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+}
+.hc-chat__thinking-toggle:hover {
+  background: rgba(217, 119, 6, 0.12);
+}
+.hc-chat__thinking-icon {
+  font-size: 12px;
+}
+.hc-chat__thinking-len {
+  color: var(--mw-text-muted);
+  font-size: 10px;
+}
+.hc-chat__thinking-body {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: #fdf6ec;
+  border-radius: 6px;
+  font-family: 'Songti SC', 'STSong', 'SimSun', serif;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  color: var(--mw-text-secondary);
+}
+.hc-chat__cursor {
+  display: inline-block;
+  margin-left: 2px;
+  animation: hc-cursor-blink 1s steps(2) infinite;
+}
+@keyframes hc-cursor-blink {
+  50% { opacity: 0; }
 }
 </style>

@@ -16,6 +16,7 @@ import com.momentweaver.heartcove.dto.HeartcoveEnableRequest;
 import com.momentweaver.heartcove.dto.HeartcoveStatusVO;
 import com.momentweaver.heartcove.entity.HeartcoveAuditLog;
 import com.momentweaver.heartcove.entity.HeartcoveConsent;
+import com.momentweaver.heartcove.event.HeartcoveEnableEvent;
 import com.momentweaver.heartcove.mapper.HeartcoveAuditLogMapper;
 import com.momentweaver.heartcove.mapper.HeartcoveConsentMapper;
 import com.momentweaver.memory.entity.InterviewSession;
@@ -136,6 +137,14 @@ public class HeartcoveConsentService {
 
         // 5. 通知所有项目 admin（"XX 已为【人物】开启心声邮箱"）
         notifyAdmins(subject, userId);
+
+        // 6. 异步触发 persona_summary 生成（M14+ 体验修复）
+        //    fire-and-forget: 失败不影响 enable 成功, 由 HeartcovePersonaGenerator 兜底写默认模板
+        try {
+            eventPublisher.publishEvent(new HeartcoveEnableEvent(userId, subjectId));
+        } catch (Exception e) {
+            log.warn("publish HeartcoveEnableEvent failed (subject={}): {}", subjectId, e.toString());
+        }
 
         return getStatus(userId, subjectId);
     }

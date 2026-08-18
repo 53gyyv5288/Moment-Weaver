@@ -116,7 +116,9 @@ public class HeartcoveChatService {
         for (InterviewSession s : sessions) {
             if (s.getMessages() == null) continue;
             for (InterviewMessage m : s.getMessages()) {
-                if (!"assistant".equals(m.getRole())) continue;
+                // ⛔ 修正:采访里 role=user 才是被访者本人(爷爷/外婆)的发言,role=assistant 是 AI 采访员提问。
+                // 旧实现取 role=assistant,等于把"AI 问过的问题"当成"先辈发言"喂给 LLM,导致 AI 输出事实虚构。
+                if (!"user".equals(m.getRole())) continue;
                 if (m.getContent() == null || m.getContent().isBlank()) continue;
                 String content = m.getContent();
                 // 任一 token 命中即收录
@@ -126,6 +128,11 @@ public class HeartcoveChatService {
                 }
                 if (!matched) continue;
                 Map<String, String> item = new HashMap<>();
+                // ⛔ 溯源修复:MongoDB interview_session.messages 是嵌入式数组,
+                // 单条 message 没有 _id,只能用 InterviewSession._id + InterviewMessage.turnId 联合定位。
+                // 前端"查看原话"按钮与合规追溯靠这两个字段定位。
+                item.put("interview_session_id", s.getId() == null ? "" : s.getId());
+                item.put("turn_id", m.getTurnId() == null ? "" : m.getTurnId().toString());
                 item.put("content", trim(content, 200));
                 item.put("source", "采访原话");
                 hits.add(item);
@@ -370,6 +377,10 @@ public class HeartcoveChatService {
      * 解析单个 SSE 事件块（形如 "event: token\ndata: hello"），按 event 类型累加到对应容器。
      * 这是 WebClient.bodyToFlux(String) 上层唯一的可靠 SSE 解析方式—— WebClient 对 SSE 是按
      * 物理行切还是按事件块切，依赖 Spring/Reactor 版本，不能假设。
+     *
+     * <p>M14+: 新增 event: thinking 帧 (推理模型的思考链)。本方法只累加
+     * event: token 到 aiReply, event: thinking 被忽略(不会被错加进正文),
+     * 由 enriched.flatMap 把整帧字节原样透传给前端,前端 onThinking 回调单独展示。</p>
      */
     private void parseAndAccumulate(String frame, StringBuilder aiReply,
                                     String[] unknownType, String[] safetyFlag, String[] sourceIds) {

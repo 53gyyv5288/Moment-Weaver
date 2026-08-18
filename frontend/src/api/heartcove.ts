@@ -53,6 +53,9 @@ export interface HeartcoveMessageVO {
   sourceMessageIds?: string | null
   unknownType?: string | null
   safetyFlag?: string | null
+  // M14+: LLM 在回复末尾输出的 <<EVIDENCE>> 段(已剥离, 不在 content 里)
+  // 本期不持久化, 重新加载历史消息时为空
+  evidence?: string[]
   createdAt: string
 }
 
@@ -131,7 +134,10 @@ export async function listMyEnabledHeartcoveSubjects(): Promise<EnabledHeartcove
 
 export interface StreamCallbacks {
   onToken: (token: string) => void
-  onMeta?: (meta: { unknownType?: string; sourceQuoteIds?: number[] }) => void
+  // M14+: 推理模型的思考链,前端折叠展示;非推理模型不会触发
+  onThinking?: (token: string) => void
+  // ⛔ 溯源修复:sourceQuoteIds 是 MongoDB interview_message._id 字符串列表,不再是数组下标
+  onMeta?: (meta: { unknownType?: string; sourceQuoteIds?: string[] }) => void
   onError?: (msg: string) => void
   onDone?: () => void
 }
@@ -199,6 +205,8 @@ export async function streamHeartcoveChat(
 
         if (event === 'token') {
           cb.onToken(data)
+        } else if (event === 'thinking') {
+          cb.onThinking?.(data)
         } else if (event === 'meta') {
           try {
             const m = JSON.parse(data)
