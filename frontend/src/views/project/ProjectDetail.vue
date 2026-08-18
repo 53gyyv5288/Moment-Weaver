@@ -30,6 +30,8 @@ import { formatDateTime } from '@/utils/format'
 import { useProjectPermission } from '@/composables/useProjectPermission'
 import { useAuthStore } from '@/stores/auth'
 import type { ProjectVO } from '@/api/project'
+import { getHeartcoveStatus, type HeartcoveStatus } from '@/api/heartcove'
+import HeartcoveEnableDialog from '@/views/heartcove/HeartcoveEnableDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,7 +66,41 @@ const loading = ref(false)
 /** M12+：个人项目"开始采访"按钮 loading 态 */
 const starting = ref(false)
 
-// ============ M11 Phase 2：添加人物（Tab 形式）============
+// M13+ 心声信箱：每个 subject 的状态缓存
+const heartcoveMap = ref<Record<number, HeartcoveStatus | null>>({})
+const heartcoveEntries = computed(() =>
+  Object.values(heartcoveMap.value).filter((s): s is HeartcoveStatus => !!s && s.enabled === 1),
+)
+const showHeartcoveEnable = ref(false)
+const heartcoveEnableTarget = ref<{ id: number; name: string } | null>(null)
+
+async function loadHeartcove() {
+  const next: Record<number, HeartcoveStatus | null> = {}
+  for (const s of subjects.value) {
+    try {
+      next[s.id] = await getHeartcoveStatus(s.id)
+    } catch {
+      next[s.id] = null
+    }
+  }
+  heartcoveMap.value = next
+}
+
+function openHeartcoveEnable(id: number, name: string) {
+  heartcoveEnableTarget.value = { id, name }
+  showHeartcoveEnable.value = true
+}
+
+function enterHeartcove(subjectId: number) {
+  router.push({ name: 'heartcove-chat', params: { subjectId } })
+}
+
+async function onHeartcoveEnabled() {
+  showHeartcoveEnable.value = false
+  await loadHeartcove()
+}
+
+// 在 load() 末尾拉心信箱状态（需要找到原 load 函数的结束位置）
 const showAddSubject = ref(false)
 const addSubjectTab = ref<'family' | 'anonymous'>('family')  // 默认显示「从家族成员选」
 const eligibleMembers = ref<EligibleFamilyMemberVO[]>([])
@@ -160,6 +196,8 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // M13+ 心声信箱：拉取每个 subject 的状态
+  loadHeartcove()
 }
 
 onMounted(load)
@@ -615,6 +653,45 @@ function loadAssets() {
       </template>
     </el-dialog>
 
+    <!-- 心声信箱（M13+）-->
+    <section class="pd__heartcove">
+      <div class="pd__heartcove-header">
+        <span class="pd__heartcove-icon">📜</span>
+        <span class="pd__heartcove-title">心声信箱</span>
+        <el-tag v-if="heartcoveEntries.length" size="small" type="success" effect="plain">
+          {{ heartcoveEntries.length }} 位已开启
+        </el-tag>
+      </div>
+      <p class="pd__heartcove-desc">
+        开启后，可与「他们」继续聊聊天。
+        回应均由 AI 基于既往采访素材生成。
+      </p>
+      <ul class="pd__heartcove-list" v-if="subjects.length">
+        <li v-for="s in subjects" :key="s.id" class="pd__heartcove-item">
+          <span class="pd__heartcove-name">{{ s.displayName }}</span>
+          <span class="pd__heartcove-state">
+            <template v-if="heartcoveMap[s.id]?.enabled === 1">
+              <el-tag size="small" type="success" effect="plain">已开启</el-tag>
+              <el-button text size="small" type="primary" @click="enterHeartcove(s.id)">进入</el-button>
+            </template>
+            <template v-else>
+              <span v-if="(heartcoveMap[s.id]?.turnsToGo ?? 0) > 0" class="pd__heartcove-hint">
+                还差 {{ heartcoveMap[s.id]?.turnsToGo }} 轮采访
+              </span>
+              <el-button
+                v-else
+                size="small"
+                type="primary"
+                plain
+                @click="openHeartcoveEnable(s.id, s.displayName)"
+              >开启</el-button>
+            </template>
+          </span>
+        </li>
+      </ul>
+      <el-empty v-else description="暂无可开启心信箱的人物" :image-size="60" />
+    </section>
+
     <!-- 发起授权对话框 -->
     <el-dialog v-model="showCreateAuthz" title="发起授权" width="500px">
       <el-form label-width="100px">
@@ -646,6 +723,15 @@ function loadAssets() {
         <el-button type="primary" @click="onCreateAuthz">生成链接</el-button>
       </template>
     </el-dialog>
+
+    <!-- M13+ 心声信箱开启对话框 -->
+    <HeartcoveEnableDialog
+      v-if="showHeartcoveEnable && heartcoveEnableTarget"
+      :subject-id="heartcoveEnableTarget.id"
+      :subject-name="heartcoveEnableTarget.name"
+      @enabled="onHeartcoveEnabled"
+      @cancel="showHeartcoveEnable = false"
+    />
   </div>
 </template>
 
@@ -653,6 +739,62 @@ function loadAssets() {
 .pd { width: 100%; }
 .pd__actions { margin-bottom: 12px; }
 .muted { color: var(--mw-text-muted); }
+
+/* M13+ 心声信箱 */
+.pd__heartcove {
+  margin-top: 24px;
+  background: var(--mw-surface);
+  border: 1px dashed var(--mw-border);
+  border-radius: var(--mw-radius);
+  padding: 16px 20px;
+}
+.pd__heartcove-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.pd__heartcove-icon { font-size: 18px; }
+.pd__heartcove-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--mw-text);
+  letter-spacing: 0.5px;
+}
+.pd__heartcove-desc {
+  font-size: 12px;
+  color: var(--mw-text-muted);
+  margin: 0 0 12px;
+}
+.pd__heartcove-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pd__heartcove-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--mw-bg);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.pd__heartcove-name {
+  color: var(--mw-text);
+}
+.pd__heartcove-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pd__heartcove-hint {
+  font-size: 12px;
+  color: var(--mw-text-muted);
+}
 .pd__subjName { display: inline-flex; align-items: center; gap: 6px; }
 .fm__name { display: inline-flex; align-items: center; gap: 6px; }
 

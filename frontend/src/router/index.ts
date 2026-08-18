@@ -159,6 +159,19 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/family/FamilyDetail.vue'),
         meta: { hideCrumb: true, title: '家族详情' },
       },
+      // M13+ Heartcove：心声信箱（独立路由，不挂在 projects/:id 下）
+      {
+        path: 'heart-cove',
+        name: 'heartcove-entry',
+        component: () => import('@/views/heartcove/HeartcoveEntry.vue'),
+        meta: { title: '心声信箱' },
+      },
+      {
+        path: 'heart-cove/subjects/:subjectId',
+        name: 'heartcove-chat',
+        component: () => import('@/views/heartcove/HeartcoveChat.vue'),
+        meta: { hideCrumb: true, title: '心声对话' },
+      },
     ],
   },
 

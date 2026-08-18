@@ -37,6 +37,16 @@ public class Subject {
     /** 备注：仅 owner 自己可见 */
     private String note;
 
+    // ===== 心声信箱 (Heartcove / Digital Twin) =====
+    /** 心声信箱是否已开启。0=未开启；1=已开启 */
+    private Integer heartcoveEnabled;
+    /** 心声信箱人格摘要缓存（AI 抽取自采访素材；为空时按需生成） */
+    private String heartcovePersonaSummary;
+    /** 心声信箱开启时间 */
+    private LocalDateTime heartcoveEnabledAt;
+    /** 启用授权书版本（与 heartcove_consent.consent_version 一致） */
+    private String heartcoveConsentVersion;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

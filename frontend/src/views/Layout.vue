@@ -19,6 +19,9 @@ const activeMenu = computed(() => {
   return route.path
 })
 
+// 心声信箱入口存在性（用于底栏低调提示）
+const onHeartcovePath = computed(() => route.path.startsWith('/heart-cove'))
+
 // 面包屑：项目子页由 ProjectLayout 自带「← 我的项目 + 项目名」页头，
 // 这里不再重复（meta.hideCrumb 由 projects/:id 父路由下发，子路由自动继承）。
 const crumbs = computed(() => {
@@ -92,6 +95,11 @@ onUnmounted(() => {
 
     <el-footer class="layout__footer">
       <span>Moment Weaver · v0.1.0 · MVP</span>
+      <button
+        class="layout__heartcove"
+        :class="{ 'layout__heartcove--active': onHeartcovePath }"
+        @click="router.push('/heart-cove')"
+      >📜 心声信箱</button>
     </el-footer>
   </el-container>
 </template>
@@ -166,5 +174,34 @@ onUnmounted(() => {
   color: var(--mw-text-muted);
   font-size: 12px;
   background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  position: relative;
+}
+.layout__heartcove {
+  position: absolute;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--mw-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 12px;
+  letter-spacing: 0.5px;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.layout__heartcove:hover {
+  color: var(--mw-primary);
+  border-color: var(--mw-border);
+  background: var(--mw-surface);
+}
+.layout__heartcove--active {
+  color: var(--mw-primary);
+  border-color: var(--mw-primary);
 }
 </style>

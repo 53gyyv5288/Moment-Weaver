@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import asset, decide, health, interview, narrative, summarize, share_preview, notify, moderation, summarize_rolling
+from app.routers import asset, decide, health, heartcove, interview, narrative, summarize, share_preview, notify, moderation, summarize_rolling
 from app.rag import embedder as rag_embedder
 from app.rag import milvus_client as rag_milvus
 from app.rag import reranker_client as rag_reranker
@@ -83,6 +83,8 @@ app.include_router(moderation.router, prefix="/api/v1/moderation", tags=["modera
 app.include_router(rag_router.router, prefix="/api/v1/rag", tags=["rag"])
 # M9+ Adaptive RAG：检索决策路由器（不调 LLM 时也能工作）
 app.include_router(decide.router, prefix="/api/v1/decide", tags=["decide"])
+# M13+ Heartcove：心声信箱（数字先辈 / AI 复刻）。仅检索 interview_message 上下文，不进 milvus。
+app.include_router(heartcove.router, prefix="/api/v1/heartcove", tags=["heartcove"])
 
 
 @app.get("/")

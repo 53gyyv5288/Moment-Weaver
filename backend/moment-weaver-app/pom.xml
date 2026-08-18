@@ -106,6 +106,10 @@
             <groupId>com.momentweaver</groupId>
             <artifactId>module-rag</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.momentweaver</groupId>
+            <artifactId>module-heartcove</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

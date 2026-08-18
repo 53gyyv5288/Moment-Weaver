@@ -29,6 +29,7 @@
         <module>module-notification</module>
         <module>module-export</module>
         <module>module-rag</module>
+        <module>module-heartcove</module>
     </modules>
 
     <properties>
@@ -91,6 +92,11 @@
             <dependency>
                 <groupId>com.momentweaver</groupId>
                 <artifactId>module-rag</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.momentweaver</groupId>
+                <artifactId>module-heartcove</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
