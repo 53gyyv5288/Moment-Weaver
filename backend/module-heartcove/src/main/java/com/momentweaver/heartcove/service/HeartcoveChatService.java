@@ -91,7 +91,9 @@ public class HeartcoveChatService {
         // 4) 组装
         Map<String, Object> ctx = new HashMap<>();
         ctx.put("display_name", subject.getDisplayName() == null ? "先辈" : subject.getDisplayName());
-        ctx.put("age_hint", inferAgeHint(subject));
+        // M14+: 删 age_hint（硬模板会限制先辈类型, 改为 persona_summary 决定人设）
+        // 新增 relation：用户对先辈的称呼, 供 prompt 第 1 段 fallback 用
+        ctx.put("relation", subject.getRelation() == null ? "先辈" : subject.getRelation());
         ctx.put("style_tone", "温和长辈");
         ctx.put("persona_summary", subject.getHeartcovePersonaSummary() == null
             ? "（暂无摘要）" : subject.getHeartcovePersonaSummary());
@@ -190,7 +192,8 @@ public class HeartcoveChatService {
         HeartcoveSession s = sessionMapper.selectById(sessionId);
         body.setSubject_id(String.valueOf(s.getSubjectId()));
         body.setDisplay_name((String) ctx.get("display_name"));
-        body.setAge_hint((String) ctx.get("age_hint"));
+        // M14+: 删 age_hint, 新增 relation
+        body.setRelation((String) ctx.get("relation"));
         body.setStyle_tone((String) ctx.get("style_tone"));
         body.setPersona_summary((String) ctx.get("persona_summary"));
         body.setRecent_dialog((List<Map<String, String>>) ctx.get("recent_dialog"));
@@ -342,10 +345,8 @@ public class HeartcoveChatService {
         return s;
     }
 
-    private String inferAgeHint(Subject subject) {
-        // MVP：不存年龄字段；让用户口述时给一个 hint（如"长辈"）
-        return "长辈（" + (subject.getRelation() == null ? "先辈" : subject.getRelation()) + "）";
-    }
+    // M14+: 删 inferAgeHint, 不再用硬编码模板生成"长辈(relation)" 这种 age_hint;
+    // 人物年龄/年代信息由 persona_summary 表达, 运行时 prompt 不再硬塞。
 
     private List<String> tokenize(String text) {
         if (text == null) return Collections.emptyList();

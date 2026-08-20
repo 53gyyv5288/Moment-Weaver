@@ -128,9 +128,11 @@ public class HeartcoveAiClient {
         private String session_id;
         private String subject_id;
         private String display_name;
-        private String age_hint;
+        // M14+: 删 age_hint (硬模板会限制先辈类型, 改为 persona_summary 决定人设)
         private String style_tone;
         private String persona_summary;
+        // 用户对先辈的称呼, 如 "孙子" "女儿" "我自己"
+        private String relation;
         private List<Map<String, String>> recent_dialog;
         private List<Map<String, String>> related_quotes;
         private String user_msg;

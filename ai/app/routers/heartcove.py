@@ -63,9 +63,10 @@ class HeartcoveStreamRequest(BaseModel):
     session_id: str = Field(default="")
     subject_id: str = Field(default="")
     display_name: str = Field(default="先辈")
-    age_hint: str = Field(default="长辈")          # 如 "80 岁" / "出生于 1942 年"
+    # M14+: 删 age_hint (硬模板会限制先辈类型, 改为 persona_summary 决定人设)
     style_tone: str = Field(default="温和长辈")    # 温和长辈 / 平实日常 / 简洁克制
     persona_summary: str = Field(default="")
+    relation: str = Field(default="先辈")          # 用户对先辈的称呼, 如 "孙子" "女儿" "我自己"
     recent_dialog: list[DialogItem] = Field(default_factory=list)
     related_quotes: list[QuoteItem] = Field(default_factory=list)
     user_msg: str
@@ -129,6 +130,9 @@ async def stream(req: HeartcoveStreamRequest) -> StreamingResponse:
         return StreamingResponse(crisis_event_source(), media_type="text/event-stream")
 
     # 2. 命中不知道话术池（modern_topic / boundary）→ 短路返回一句
+    #    M14+: 删 no_material 短路。情绪倾诉("我好烦") / 日常("忘写作业") 这类场景
+    #    走 LLM 走完会自然回应(基于 persona_summary + recent_dialog),不再被通用话术池打回。
+    #    no_material 话术池保留,作为 LLM 异常时的兜底(下面 event_source 的 except 分支)。
     if unknown_type in ("modern_topic", "boundary"):
         phrase = pick_phrase(unknown_type)
         async def short_event_source() -> AsyncIterator[bytes]:
@@ -137,22 +141,10 @@ async def stream(req: HeartcoveStreamRequest) -> StreamingResponse:
             yield b"event: done\ndata:\n\n"
         return StreamingResponse(short_event_source(), media_type="text/event-stream")
 
-    # 3. 无召回到相关原话 → no_material 兜底
-    has_quote = bool(req.related_quotes)
-    if not has_quote and unknown_type is None:
-        # 既没现代词/边界词，也没召回原话：直接走 no_material
-        unknown_type = "no_material"
-        phrase = pick_phrase("no_material")
-        async def no_material_source() -> AsyncIterator[bytes]:
-            yield f"event: token\ndata: {_safe(phrase)}\n\n".encode("utf-8")
-            yield f'event: meta\ndata: {{"unknown_type":"{unknown_type}"}}\n\n'.encode("utf-8")
-            yield b"event: done\ndata:\n\n"
-        return StreamingResponse(no_material_source(), media_type="text/event-stream")
-
-    # 4. 走 LLM 流式生成
+    # 3. 其他所有场景（包括情绪/日常/无原话召回）→ 走 LLM 流式生成
     sys_prompt = build_system_prompt(
         display_name=req.display_name,
-        age_hint=req.age_hint,
+        relation=req.relation,
         style_tone=req.style_tone,
         persona_summary=req.persona_summary,
         recent_dialog=[m.model_dump() for m in req.recent_dialog],
@@ -188,9 +180,10 @@ async def stream(req: HeartcoveStreamRequest) -> StreamingResponse:
             }
             yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n".encode("utf-8")
         except LlmError as e:
-            log.exception("heartcove LLM error")
-            err_msg = _safe(str(e))
-            yield f"event: error\ndata: {err_msg}\n\n".encode("utf-8")
+            # LLM 异常兜底: 不让前端收到 error 后空白, 用 no_material 话术池补一句
+            log.exception("heartcove LLM error, falling back to no_material phrase: %s", e)
+            phrase = pick_phrase("no_material")
+            yield f"event: token\ndata: {_safe(phrase)}\n\n".encode("utf-8")
         yield b"event: done\ndata:\n\n"
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
