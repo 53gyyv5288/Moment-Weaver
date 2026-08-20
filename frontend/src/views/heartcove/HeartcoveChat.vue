@@ -33,16 +33,21 @@ const scrollRef = ref<HTMLDivElement | null>(null)
 
 // 临时缓冲：流式追加的 token 拼到这一条
 const streamingMsg = ref<HeartcoveMessageVO | null>(null)
-// M14+: 当前正在流式接收的 AI 思考过程(仅展示,不持久化)
-const streamingThinking = ref('')
-// 用户展开/折叠"思考过程"面板 (默认折叠)
-const thinkingCollapsed = ref(true)
+// M14+: 每条 AI 消息的 thinking 展开状态, key 是 m.id 或 m.createdAt(本地占位消息没 id)
+// thinking 内容本身挂到 aiMsg.thinking(前端本地字段,不持久化;刷新页面后丢失,
+// 因为后端 HeartcoveMessageVO 没有 thinking 字段——这正是用户要的"暂时保存"语义)
+const thinkingExpanded = reactive<Record<string, boolean>>({})
 // M14+: 每条 AI 消息的 evidence 展开状态, key 是 m.id 或 m.createdAt(本地占位消息没 id)
 const evidenceExpanded = reactive<Record<string, boolean>>({})
 
 function toggleEvidence(m: HeartcoveMessageVO) {
   const k = m.id || m.createdAt
   evidenceExpanded[k] = !evidenceExpanded[k]
+}
+
+function toggleThinking(m: HeartcoveMessageVO) {
+  const k = m.id || m.createdAt
+  thinkingExpanded[k] = !thinkingExpanded[k]
 }
 
 async function loadOrCreate() {
@@ -92,8 +97,9 @@ async function send() {
   streaming.value = true
   const controller = new AbortController()
   abortRef.value = controller
-  streamingThinking.value = ''  // 每次新消息清空
-  thinkingCollapsed.value = true  // 默认折叠
+  // 思考过程挂到这条消息上(前端本地字段,不持久化),默认折叠
+  const thinkingKey = aiMsg.id || aiMsg.createdAt
+  thinkingExpanded[thinkingKey] = false
 
   try {
     await streamHeartcoveChat(
@@ -106,7 +112,8 @@ async function send() {
         },
         onThinking: (tok) => {
           // 推理模型的思考链;非推理模型不会触发
-          streamingThinking.value += tok
+          // 累加到这条消息上(前端本地字段,不持久化),流式结束后仍可查看
+          aiMsg.thinking = (aiMsg.thinking || '') + tok
           scrollToBottom()
         },
         onMeta: (meta) => {
@@ -132,7 +139,7 @@ async function send() {
   } finally {
     streaming.value = false
     streamingMsg.value = null
-    streamingThinking.value = ''  // 流结束清空
+    // thinking 累加在 aiMsg.thinking 上,流结束不清空——用户可在消息下方继续查看
     abortRef.value = null
   }
 }
@@ -238,21 +245,24 @@ onUnmounted(() => abortRef.value?.abort())
         >
           <div class="hc-chat__bubble">
             <div class="hc-chat__content">{{ m.content }}</div>
-            <!-- M14+: 推理模型思考过程,默认折叠,仅当正在流式且有内容时显示 -->
+            <!-- M14+: 推理模型思考过程,挂在每条消息上,流式结束后仍可查看(不持久化,刷新即丢) -->
             <div
-              v-if="streaming && streamingMsg === m && streamingThinking"
+              v-if="m.thinking"
               class="hc-chat__thinking"
             >
               <button
                 type="button"
                 class="hc-chat__thinking-toggle"
-                @click="thinkingCollapsed = !thinkingCollapsed"
+                @click="toggleThinking(m)"
               >
                 <span class="hc-chat__thinking-icon">🧠</span>
-                <span>{{ thinkingCollapsed ? '查看思考过程' : '收起思考过程' }}</span>
-                <span class="hc-chat__thinking-len">{{ streamingThinking.length }} 字</span>
+                <span>{{ thinkingExpanded[m.id || m.createdAt] ? '收起思考过程' : '查看思考过程' }}</span>
+                <span class="hc-chat__thinking-len">{{ m.thinking.length }} 字</span>
               </button>
-              <pre v-if="!thinkingCollapsed" class="hc-chat__thinking-body">{{ streamingThinking }}<span class="hc-chat__cursor">▍</span></pre>
+              <pre
+                v-if="thinkingExpanded[m.id || m.createdAt]"
+                class="hc-chat__thinking-body"
+              >{{ m.thinking }}<span v-if="streaming && streamingMsg === m" class="hc-chat__cursor">▍</span></pre>
             </div>
             <div class="hc-chat__foot" v-if="m.role === 'ai'">
               <span class="hc-chat__tag">AI 生成 · 基于采访素材</span>

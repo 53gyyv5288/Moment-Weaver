@@ -56,6 +56,9 @@ export interface HeartcoveMessageVO {
   // M14+: LLM 在回复末尾输出的 <<EVIDENCE>> 段(已剥离, 不在 content 里)
   // 本期不持久化, 重新加载历史消息时为空
   evidence?: string[]
+  // M14+: 推理模型的思考过程,挂在这条消息上;前端本地字段,不持久化,
+  // 刷新页面或重新打开会话后丢失——用户要的就是"暂时保存"语义
+  thinking?: string
   createdAt: string
 }
 
