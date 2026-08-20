@@ -12,15 +12,14 @@ const router = useRouter()
 const route = useRoute()
 
 // 顶栏只承载全局导航；项目级入口（时间线 / 成稿 / 分享）由 ProjectLayout 提供。
-// 停留在项目子页时，顶栏仍高亮「我的项目」；停留在家族子页时高亮「家族」。
+// 停留在项目子页时，顶栏仍高亮「我的项目」；停留在家族子页时高亮「家族」；
+// 停留在心声信箱子页时（/heart-cove, /heart-cove/subjects/:id）高亮「心声信箱」。
 const activeMenu = computed(() => {
   if (route.path.startsWith('/projects')) return '/projects'
   if (route.path.startsWith('/families')) return '/families'
+  if (route.path.startsWith('/heart-cove')) return '/heart-cove'
   return route.path
 })
-
-// 心声信箱入口存在性（用于底栏低调提示）
-const onHeartcovePath = computed(() => route.path.startsWith('/heart-cove'))
 
 // 面包屑：项目子页由 ProjectLayout 自带「← 我的项目 + 项目名」页头，
 // 这里不再重复（meta.hideCrumb 由 projects/:id 父路由下发，子路由自动继承）。
@@ -71,6 +70,7 @@ onUnmounted(() => {
       >
         <el-menu-item index="/projects">我的项目</el-menu-item>
         <el-menu-item index="/families">家族</el-menu-item>
+        <el-menu-item index="/heart-cove">心声信箱</el-menu-item>
         <el-menu-item index="/notifications">通知</el-menu-item>
         <el-menu-item index="/compliance">合规</el-menu-item>
       </el-menu>
@@ -95,11 +95,6 @@ onUnmounted(() => {
 
     <el-footer class="layout__footer">
       <span>Moment Weaver · v0.1.0 · MVP</span>
-      <button
-        class="layout__heartcove"
-        :class="{ 'layout__heartcove--active': onHeartcovePath }"
-        @click="router.push('/heart-cove')"
-      >📜 心声信箱</button>
     </el-footer>
   </el-container>
 </template>
@@ -178,30 +173,5 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 24px;
-  position: relative;
-}
-.layout__heartcove {
-  position: absolute;
-  right: 28px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--mw-text-muted);
-  font-size: 11px;
-  cursor: pointer;
-  padding: 4px 10px;
-  border-radius: 12px;
-  letter-spacing: 0.5px;
-  transition: color 0.2s, border-color 0.2s, background 0.2s;
-}
-.layout__heartcove:hover {
-  color: var(--mw-primary);
-  border-color: var(--mw-border);
-  background: var(--mw-surface);
-}
-.layout__heartcove--active {
-  color: var(--mw-primary);
-  border-color: var(--mw-primary);
 }
 </style>
