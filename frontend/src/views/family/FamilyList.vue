@@ -2,16 +2,25 @@
 /**
  * 我的家族列表（M10+ Family Phase 1）。
  * 路由：/families
+ *
+ * <p>M14+ 加 tab「家族树」：显示我加入的所有家族的家族树（跨项目聚合）。</p>
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { listFamilies, type FamilyVO } from '@/api/family'
+import { listMyFamilyTrees, type MyFamilyTreeVO } from '@/api/familyTree'
+import FamilyTree from '@/views/family/FamilyTree.vue'
 
 const router = useRouter()
 const families = ref<FamilyVO[]>([])
 const loading = ref(false)
+const activeTab = ref<'list' | 'tree'>('list')
+
+// 家族树数据（一次拉所有家族）
+const familyTrees = ref<MyFamilyTreeVO[]>([])
+const treesLoading = ref(false)
 
 async function load() {
   loading.value = true
@@ -24,6 +33,32 @@ async function load() {
   }
 }
 
+async function loadTrees() {
+  treesLoading.value = true
+  try {
+    const { data } = await listMyFamilyTrees()
+    if (data?.code === 0) familyTrees.value = data.data || []
+    else ElMessage.error(data?.message || '家族树加载失败')
+  } finally {
+    treesLoading.value = false
+  }
+}
+
+function onTabChange(tab: string | number) {
+  if (tab === 'tree' && familyTrees.value.length === 0 && !treesLoading.value) {
+    loadTrees()
+  }
+}
+
+// 按 familyId 找家族名（用于家族树标题）
+const familyNameMap = computed(() => {
+  const map = new Map<string, string>()
+  for (const f of families.value) {
+    map.set(f.id, f.name)
+  }
+  return map
+})
+
 function roleLabel(r: string) {
   return { admin: '管理员', editor: '编辑者', viewer: '旁观者' }[r] || r
 }
@@ -31,7 +66,9 @@ function roleType(r: string) {
   return { admin: 'warning', editor: '', viewer: 'info' }[r] || ''
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+})
 </script>
 
 <template>
@@ -46,32 +83,79 @@ onMounted(load)
       </el-button>
     </header>
 
-    <el-empty v-if="!loading && families.length === 0" description="还没加入任何家族">
-      <el-button type="primary" @click="router.push('/families/new')">创建第一个家族</el-button>
-    </el-empty>
+    <el-tabs v-model="activeTab" @tab-change="onTabChange">
+      <!-- ============== 家族列表 ============== -->
+      <el-tab-pane label="家族列表" name="list">
+        <el-empty v-if="!loading && families.length === 0" description="还没加入任何家族">
+          <el-button type="primary" @click="router.push('/families/new')">创建第一个家族</el-button>
+        </el-empty>
 
-    <div v-else class="fl__grid">
-      <el-card
-        v-for="f in families"
-        :key="f.id"
-        shadow="hover"
-        class="fl__card"
-        @click="router.push(`/families/${f.id}`)"
-      >
-        <header class="fl__cardHead">
-          <h3>{{ f.name }}</h3>
-          <el-tag :type="roleType(f.myRole) as any" size="small" effect="plain">
-            {{ roleLabel(f.myRole) }}
-          </el-tag>
-        </header>
-        <p v-if="f.description" class="fl__desc">{{ f.description }}</p>
-        <p v-else class="muted">（暂无描述）</p>
-        <footer class="fl__meta">
-          <span>成员 {{ f.memberCount ?? '?' }} 人</span>
-          <span>项目 {{ f.projectCount ?? '?' }} 个</span>
-        </footer>
-      </el-card>
-    </div>
+        <div v-else class="fl__grid">
+          <el-card
+            v-for="f in families"
+            :key="f.id"
+            shadow="hover"
+            class="fl__card"
+            @click="router.push(`/families/${f.id}`)"
+          >
+            <header class="fl__cardHead">
+              <h3>{{ f.name }}</h3>
+              <el-tag :type="roleType(f.myRole) as any" size="small" effect="plain">
+                {{ roleLabel(f.myRole) }}
+              </el-tag>
+            </header>
+            <p v-if="f.description" class="fl__desc">{{ f.description }}</p>
+            <p v-else class="muted">（暂无描述）</p>
+            <footer class="fl__meta">
+              <span>成员 {{ f.memberCount ?? '?' }} 人</span>
+              <span>项目 {{ f.projectCount ?? '?' }} 个</span>
+            </footer>
+          </el-card>
+        </div>
+      </el-tab-pane>
+
+      <!-- ============== 家族树（M14+）============== -->
+      <el-tab-pane label="家族树" name="tree">
+        <div v-loading="treesLoading">
+          <el-empty
+            v-if="!treesLoading && familyTrees.length === 0"
+            description="还没加入任何家族，或家族下还没有被采访者"
+          />
+
+          <div v-else class="fl__trees">
+            <div
+              v-for="ft in familyTrees"
+              :key="ft.familyId"
+              class="fl__treeBlock"
+            >
+              <header class="fl__treeHead">
+                <h3>{{ familyNameMap.get(String(ft.familyId)) || `家族 ${ft.familyId}` }}</h3>
+                <el-button
+                  size="small"
+                  text
+                  @click="router.push(`/families/${ft.familyId}`)"
+                >
+                  进入家族 →
+                </el-button>
+              </header>
+              <p class="muted fl__treeSub">
+                共 {{ ft.tree.total }} 位被访者
+                <span v-if="ft.tree.warnings.length > 0" style="color: #d97706">
+                  · {{ ft.tree.warnings.length }} 处代际待修正
+                </span>
+                <span v-if="ft.tree.orphans.length > 0" style="color: var(--mw-text-muted)">
+                  · {{ ft.tree.orphans.length }} 位待归位
+                </span>
+              </p>
+              <FamilyTree
+                :nodes="ft.tree.nodes"
+                :orphans="ft.tree.orphans"
+              />
+            </div>
+          </div>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
@@ -119,5 +203,33 @@ onMounted(load)
   color: #9ca3af;
   border-top: 1px solid #f3f4f6;
   padding-top: 8px;
+}
+
+/* M14+ 家族树区 */
+.fl__trees {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.fl__treeBlock {
+  background: #fffdf7;
+  border: 1px solid var(--mw-border);
+  border-radius: var(--mw-radius);
+  padding: 16px 20px;
+}
+.fl__treeHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.fl__treeHead h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--mw-text);
+}
+.fl__treeSub {
+  margin-bottom: 12px;
 }
 </style>

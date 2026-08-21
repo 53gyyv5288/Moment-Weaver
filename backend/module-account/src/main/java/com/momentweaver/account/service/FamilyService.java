@@ -176,9 +176,23 @@ public class FamilyService {
         Map<Long, User> userMap = userMapper.selectBatchIds(userIds).stream()
             .collect(Collectors.toMap(User::getId, u -> u));
 
+        // M14+：批量取父成员的 displayName（userId → displayName 映射）
+        List<Long> parentFmIds = members.stream()
+            .map(FamilyMember::getParentFamilyMemberId)
+            .filter(java.util.Objects::nonNull)
+            .toList();
+        Map<Long, String> parentDisplayMap = parentFmIds.isEmpty() ? Collections.emptyMap()
+            : familyMemberMapper.selectBatchIds(parentFmIds).stream()
+                .collect(Collectors.toMap(FamilyMember::getId, fm -> {
+                    User pu = userMap.get(fm.getUserId());
+                    return pu != null ? pu.getDisplayName() : "家人-" + fm.getId();
+                }));
+
         return members.stream().map(m -> {
             User u = userMap.get(m.getUserId());
             FamilyMemberVO vo = new FamilyMemberVO();
+            vo.setId(m.getId());
+            vo.setFamilyId(m.getFamilyId());
             vo.setUserId(m.getUserId());
             vo.setRole(m.getRole());
             vo.setJoinedAt(m.getJoinedAt());
@@ -187,6 +201,13 @@ public class FamilyService {
                 vo.setPhone(u.getPhone());
                 vo.setEmail(u.getEmail());
                 vo.setAvatarUrl(u.getAvatarUrl());
+            }
+            // M14+ 家族关系图字段
+            vo.setGeneration(m.getGeneration());
+            vo.setParentFamilyMemberId(m.getParentFamilyMemberId());
+            vo.setParentMemberRelationType(m.getParentMemberRelationType());
+            if (m.getParentFamilyMemberId() != null) {
+                vo.setParentDisplayName(parentDisplayMap.get(m.getParentFamilyMemberId()));
             }
             return vo;
         }).toList();
@@ -246,6 +267,15 @@ public class FamilyService {
         m.setJoinedAt(LocalDateTime.now());
         m.setCreatedAt(LocalDateTime.now());
         m.setUpdatedAt(LocalDateTime.now());
+
+        // M14+ 家族关系图：写入代际 + 上一代 + 关系类型，调用校验
+        m.setGeneration(req.getGeneration());
+        m.setParentFamilyMemberId(req.getParentFamilyMemberId());
+        m.setParentMemberRelationType(req.getParentMemberRelationType());
+        if (req.getParentFamilyMemberId() != null) {
+            validateFamilyGenealogy(familyId, req.getParentFamilyMemberId(), null);
+        }
+
         familyMemberMapper.insert(m);
 
         log.info("family.member.created: familyId={} userId={} role={} by admin={}",
@@ -290,6 +320,30 @@ public class FamilyService {
 
         m.setRole(req.getRole());
         m.setUpdatedAt(LocalDateTime.now());
+
+        // M14+ 家族关系图：处理 genealogy 字段更新（哨兵值约定同 Subject）
+        Long newParentId = m.getParentFamilyMemberId();
+        boolean parentChanged = false;
+        if (req.getGeneration() != null) {
+            m.setGeneration(req.getGeneration() == -50 ? null : req.getGeneration());
+        }
+        if (req.getParentFamilyMemberId() != null) {
+            if (req.getParentFamilyMemberId() == -1L) {
+                m.setParentFamilyMemberId(null);
+                parentChanged = true;
+            } else {
+                m.setParentFamilyMemberId(req.getParentFamilyMemberId());
+                parentChanged = true;
+            }
+        }
+        if (req.getParentMemberRelationType() != null) {
+            m.setParentMemberRelationType(
+                req.getParentMemberRelationType().isEmpty() ? null : req.getParentMemberRelationType());
+        }
+        if (parentChanged && m.getParentFamilyMemberId() != null) {
+            validateFamilyGenealogy(familyId, m.getParentFamilyMemberId(), m.getId());
+        }
+
         familyMemberMapper.updateById(m);
 
         if (req.getResetPassword() != null && !req.getResetPassword().isBlank()) {
@@ -304,6 +358,8 @@ public class FamilyService {
 
         User u = userMapper.selectById(memberUserId);
         FamilyMemberVO vo = new FamilyMemberVO();
+        vo.setId(m.getId());
+        vo.setFamilyId(m.getFamilyId());
         vo.setUserId(memberUserId);
         vo.setRole(m.getRole());
         vo.setJoinedAt(m.getJoinedAt());
@@ -312,6 +368,19 @@ public class FamilyService {
             vo.setPhone(u.getPhone());
             vo.setEmail(u.getEmail());
             vo.setAvatarUrl(u.getAvatarUrl());
+        }
+        // M14+ 家族关系图字段
+        vo.setGeneration(m.getGeneration());
+        vo.setParentFamilyMemberId(m.getParentFamilyMemberId());
+        vo.setParentMemberRelationType(m.getParentMemberRelationType());
+        if (m.getParentFamilyMemberId() != null) {
+            FamilyMember parentFm = familyMemberMapper.selectById(m.getParentFamilyMemberId());
+            if (parentFm != null && parentFm.getUserId() != null) {
+                User pu = userMapper.selectById(parentFm.getUserId());
+                if (pu != null) {
+                    vo.setParentDisplayName(pu.getDisplayName());
+                }
+            }
         }
         log.info("family.member.updated: familyId={} userId={} newRole={} by admin={}",
             familyId, memberUserId, req.getRole(), adminUserId);
@@ -358,6 +427,44 @@ public class FamilyService {
         Family f = familyMapper.selectById(familyId);
         if (f == null) throw new BusinessException(ResultCode.FAMILY_NOT_FOUND);
         return f;
+    }
+
+    /**
+     * M14+ 家族关系图校验：父 family_member 必须存在 + 同 family_id + 非自环 + 链上无环。
+     *
+     * <p>环检测遍历 parent 链上限 100 层 —— 防止两个 family_member 互为父子。
+     * generation 一致性 <b>不</b>抛错——只在前端展示，由用户后续修正。</p>
+     *
+     * @param familyId       当前 family_member 所在家族
+     * @param parentFmId     父 family_member.id（必须非 null）
+     * @param selfFmId       当前 family_member.id（create 路径下为 null）
+     */
+    private void validateFamilyGenealogy(Long familyId, Long parentFmId, Long selfFmId) {
+        FamilyMember parent = familyMemberMapper.selectById(parentFmId);
+        if (parent == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "上一代家族成员不存在");
+        }
+        if (!parent.getFamilyId().equals(familyId)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "上一代必须属于同一家族");
+        }
+        if (selfFmId != null && parentFmId.equals(selfFmId)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "上一代不能是自己");
+        }
+        // 环检测：向上遍历 parent 链（上限 100 层）
+        Long cursor = parent.getParentFamilyMemberId();
+        int hops = 0;
+        while (cursor != null && hops < 100) {
+            if (cursor.equals(parentFmId) || (selfFmId != null && cursor.equals(selfFmId))) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "上一代链中存在环，请先修正上游节点");
+            }
+            FamilyMember next = familyMemberMapper.selectById(cursor);
+            if (next == null) break;
+            cursor = next.getParentFamilyMemberId();
+            hops++;
+        }
+        if (hops >= 100) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "上一代链过深（>100 层），疑似数据异常");
+        }
     }
 
     private FamilyVO toVO(Family f, String myRole, Integer memberCount, Integer projectCount) {

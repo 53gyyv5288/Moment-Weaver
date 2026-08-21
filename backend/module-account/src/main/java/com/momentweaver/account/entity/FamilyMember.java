@@ -31,6 +31,14 @@ public class FamilyMember {
     /** admin | editor | viewer */
     private String role;
 
+    // ============ M14+ 家族关系图（家谱节点源头） ============
+    /** 代际：负数=长辈（-1=父母辈，-2=祖辈），0=本人辈，正数=晚辈（1=儿女辈，2=孙辈）；NULL=未分代 */
+    private Integer generation;
+    /** 上一代 family_member.id（同家族内；NULL=上一代不在家族里） */
+    private Long parentFamilyMemberId;
+    /** 与上一代的关系类型：father|mother|guardian；NULL=未指定 */
+    private String parentMemberRelationType;
+
     private LocalDateTime joinedAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

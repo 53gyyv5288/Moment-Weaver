@@ -22,6 +22,14 @@ public class Subject {
     /** 0=未注册，1=已注册并关联账号 */
     private Integer hasAccount;
     private Long linkedUserId;
+
+    // ============ M14+ 家族关系图 ============
+    /** 代际：负数=长辈（-1=父母辈，-2=祖辈），0=本人辈，正数=晚辈（1=儿女辈，2=孙辈）；NULL=未分代 */
+    private Integer generation;
+    /** 父/母节点 subject.id（同项目内；NULL=父不在项目里） */
+    private Long parentSubjectId;
+    /** 父/母关系类型：father|mother|guardian；NULL=未指定 */
+    private String parentRelationType;
     /**
      * M11 Phase 2：关联的家族成员 id
      * - NULL  = 纯匿名被采访者（老数据 / 一次性 token 授权）

@@ -63,8 +63,9 @@ async function onSubmit() {
       newPassword: form.newPassword,
     })
     ElMessage.success('密码已修改')
-    // 更新本地 user 的 mustChangePassword 标记
-    if (auth.user) auth.user.mustChangePassword = false
+    // 从后端拉最新 user，fetchMe 内部会调 setUser 同步 Pinia + localStorage
+    // 直接改本地字段不够：刷新后守卫从 stale localStorage 命中会被劫回改密页
+    await auth.fetchMe()
     router.replace('/projects')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || e?.message || '修改失败')

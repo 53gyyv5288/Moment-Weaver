@@ -10,7 +10,7 @@
  *     <li>viewer —— 只读</li>
  *   </ul>
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ElMessage,
@@ -40,6 +40,7 @@ import {
 } from '@/api/family'
 import type { ProjectVO } from '@/api/project'
 import { formatDateTime } from '@/utils/format'
+import { suggestGeneration, formatGenerationLabel } from '@/utils/generation'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,7 +65,21 @@ const createForm = ref({
   email: '',
   password: '',
   role: 'editor' as FamilyRole,
+  // M14+ 家族关系图
+  generation: null as number | null,
+  parentFamilyMemberId: null as string | null,
+  parentMemberRelationType: null as 'father' | 'mother' | 'guardian' | null,
 })
+// 上一代下拉：所有已存在的家族成员（除自己——但创建时自己还不存在）
+const availableParents = computed<FamilyMemberVO[]>(() => members.value)
+// M14+ 代际自动建议（基于称谓联想：管理员按"我是谁"视角录入家族成员，字表给建议）
+// 注意：管理员可能是孙子辈（录叔叔/爷爷 → 负数），也可能是长辈辈（录孙辈 → 正数）。
+// 字表只覆盖常用称谓；管理员可以手动改。
+const genSuggestion = ref<number | null>(null)
+watch(
+  () => createForm.value.displayName,
+  (val) => { genSuggestion.value = suggestGeneration(val) },
+)
 
 const createRules: FormRules = {
   displayName: [
@@ -85,6 +100,9 @@ function resetCreateForm() {
     email: '',
     password: '',
     role: 'editor',
+    generation: null,
+    parentFamilyMemberId: null,
+    parentMemberRelationType: null,
   }
   createdResult.value = null
 }
@@ -105,6 +123,10 @@ async function onCreateMember() {
       email: createForm.value.email.trim() || undefined,
       password: createForm.value.password,
       role: createForm.value.role,
+      // M14+ 家族关系图字段
+      generation: createForm.value.generation,
+      parentFamilyMemberId: createForm.value.parentFamilyMemberId || undefined,
+      parentMemberRelationType: createForm.value.parentMemberRelationType || undefined,
     })
     if (data?.code === 0 && data.data) {
       createdResult.value = data.data
@@ -125,13 +147,26 @@ function closeCreate() {
 
 // ===== 编辑成员 =====
 const editingMember = ref<FamilyMemberVO | null>(null)
-const editForm = ref({ role: 'editor' as FamilyRole, resetPassword: '' })
+const editForm = ref({
+  role: 'editor' as FamilyRole,
+  resetPassword: '',
+  // M14+ 家族关系图
+  generation: null as number | null,
+  parentFamilyMemberId: null as string | null,
+  parentMemberRelationType: null as 'father' | 'mother' | 'guardian' | null,
+})
 const editDialog = ref(false)
 const savingEdit = ref(false)
 
 function openEditMember(m: FamilyMemberVO) {
   editingMember.value = m
-  editForm.value = { role: m.role, resetPassword: '' }
+  editForm.value = {
+    role: m.role,
+    resetPassword: '',
+    generation: m.generation ?? null,
+    parentFamilyMemberId: m.parentFamilyMemberId ?? null,
+    parentMemberRelationType: m.parentMemberRelationType ?? null,
+  }
   editDialog.value = true
 }
 
@@ -139,7 +174,17 @@ async function onSaveMember() {
   if (!editingMember.value) return
   savingEdit.value = true
   try {
-    const payload: UpdateFamilyMemberRequest = { role: editForm.value.role }
+    const payload: UpdateFamilyMemberRequest = {
+      role: editForm.value.role,
+      // M14+ 家族关系图字段（哨兵值约定）
+      generation: editForm.value.generation,
+      parentFamilyMemberId: editForm.value.parentFamilyMemberId === null
+        ? null
+        : editForm.value.parentFamilyMemberId || undefined,
+      parentMemberRelationType: editForm.value.parentMemberRelationType === null
+        ? null
+        : editForm.value.parentMemberRelationType || undefined,
+    }
     if (editForm.value.resetPassword && editForm.value.resetPassword.length >= 8) {
       payload.resetPassword = editForm.value.resetPassword
     }
@@ -276,6 +321,25 @@ onMounted(load)
               </el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="代数" width="100">
+            <template #default="{ row }">
+              <span v-if="row.generation !== null && row.generation !== undefined">
+                {{ formatGenerationLabel(row.generation) }}
+              </span>
+              <span v-else class="muted">未分代</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="上一代" width="160">
+            <template #default="{ row }">
+              <span v-if="row.parentDisplayName">
+                {{ row.parentDisplayName }}
+                <span v-if="row.parentMemberRelationType" class="muted" style="font-size: 11px">
+                  ({{ {father: '父', mother: '母', guardian: '监护人'}[row.parentMemberRelationType] || row.parentMemberRelationType }})
+                </span>
+              </span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="加入时间">
             <template #default="{ row }">
               {{ formatDateTime(row.joinedAt) }}
@@ -378,6 +442,49 @@ onMounted(load)
               编辑者可采访/生成成稿；旁观者只能查看不能编辑
             </div>
           </el-form-item>
+          <!-- M14+ 家族关系图（家谱节点源头） -->
+          <el-divider content-position="left" style="margin: 12px 0 8px">
+            <span style="font-size: 12px; color: var(--mw-text-muted)">家族关系（选填，建议填）</span>
+          </el-divider>
+          <el-form-item label="代际">
+            <div style="display: flex; align-items: center; gap: 8px">
+              <el-input-number
+                v-model="createForm.generation"
+                :min="-50"
+                :max="50"
+                :step="1"
+                controls-position="right"
+                style="width: 140px"
+                placeholder="留空=未分代"
+              />
+              <span v-if="genSuggestion !== null" class="muted" style="font-size: 12px">
+                建议：{{ formatGenerationLabel(genSuggestion) }}（基于称谓联想）
+              </span>
+            </div>
+          </el-form-item>
+          <el-form-item label="上一代">
+            <el-select
+              v-model="createForm.parentFamilyMemberId"
+              placeholder="不指定（上一代不在家族里）"
+              clearable
+              filterable
+              style="width: 100%"
+            >
+              <el-option
+                v-for="opt in availableParents"
+                :key="opt.id"
+                :label="opt.displayName"
+                :value="opt.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="关系类型" v-if="createForm.parentFamilyMemberId">
+            <el-radio-group v-model="createForm.parentMemberRelationType">
+              <el-radio value="father">父</el-radio>
+              <el-radio value="mother">母</el-radio>
+              <el-radio value="guardian">监护人</el-radio>
+            </el-radio-group>
+          </el-form-item>
         </el-form>
       </template>
 
@@ -413,7 +520,7 @@ onMounted(load)
     </el-dialog>
 
     <!-- ===== 编辑成员弹窗 ===== -->
-    <el-dialog v-model="editDialog" title="编辑成员" width="460px">
+    <el-dialog v-model="editDialog" title="编辑成员" width="540px">
       <el-form v-if="editingMember" label-width="100px">
         <el-form-item label="姓名">
           <span>{{ editingMember.displayName }}</span>
@@ -435,6 +542,44 @@ onMounted(load)
           <div class="muted" style="margin-top: 4px">
             填写后该成员下次登录必须改密（8-64 位）
           </div>
+        </el-form-item>
+        <!-- M14+ 家族关系图 -->
+        <el-divider content-position="left" style="margin: 12px 0 8px">
+          <span style="font-size: 12px; color: var(--mw-text-muted)">家族关系</span>
+        </el-divider>
+        <el-form-item label="代际">
+          <el-input-number
+            v-model="editForm.generation"
+            :min="-50"
+            :max="50"
+            :step="1"
+            controls-position="right"
+            style="width: 140px"
+            placeholder="留空=未分代"
+          />
+        </el-form-item>
+        <el-form-item label="上一代">
+          <el-select
+            v-model="editForm.parentFamilyMemberId"
+            placeholder="不指定（上一代不在家族里）"
+            clearable
+            filterable
+            style="width: 100%"
+          >
+            <el-option
+              v-for="opt in availableParents.filter(p => p.userId !== editingMember?.userId)"
+              :key="opt.id"
+              :label="opt.displayName"
+              :value="opt.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="关系类型" v-if="editForm.parentFamilyMemberId">
+          <el-radio-group v-model="editForm.parentMemberRelationType">
+            <el-radio value="father">父</el-radio>
+            <el-radio value="mother">母</el-radio>
+            <el-radio value="guardian">监护人</el-radio>
+          </el-radio-group>
         </el-form-item>
       </el-form>
       <template #footer>

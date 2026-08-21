@@ -1,6 +1,9 @@
 package com.momentweaver.memory.dto;
 
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -33,6 +36,37 @@ public class SubjectCreateRequest {
      * </ul>
      */
     private Long familyMemberId;
+
+    /**
+     * M14+ 家族关系图：代际。
+     * <ul>
+     *   <li>正数=长辈（1=父母辈，2=祖辈，3=曾祖辈……）</li>
+     *   <li>0=本人辈</li>
+     *   <li>负数=晚辈（-1=儿女辈，-2=孙辈……）</li>
+     *   <li>null=未分代（合法状态，前端渲染"未分代"灰色区）</li>
+     * </ul>
+     * 前端通常由 relation 字段自动建议（见前端 GENERATION_HINT 字表）。
+     */
+    @Min(value = -50, message = "代际不能小于 -50")
+    @Max(value = 50, message = "代际不能大于 50")
+    private Integer generation;
+
+    /**
+     * M14+ 家族关系图：父/母节点 subject.id（同项目内）。
+     * <ul>
+     *   <li>非空 → 指向同项目的另一个 Subject（业务层校验同 project_id + 防环）</li>
+     *   <li>null → 父辈不在本项目（合法状态，家族树根部）</li>
+     * </ul>
+     */
+    private Long parentSubjectId;
+
+    /**
+     * M14+ 家族关系图：与父/母的关系类型。
+     * <p>MVP 只用 father/mother/guardian；v2 多配偶/复杂关系会扩展。</p>
+     */
+    @Pattern(regexp = "^(father|mother|guardian)?$",
+        message = "parentRelationType 必须为 father/mother/guardian 之一")
+    private String parentRelationType;
 
     /**
      * 自定义校验：

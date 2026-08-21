@@ -95,6 +95,17 @@ export interface SubjectVO {
   latestAuthId?: string
   createdAt?: string
   updatedAt?: string
+  // ============ M14+ 家族关系图 ============
+  /** 代际：负数=长辈（-1=父母辈，-2=祖辈），0=本人辈，正数=晚辈（1=儿女辈，2=孙辈）；NULL=未分代 */
+  generation?: number | null
+  /** 父/母节点 subject.id（同项目内）；NULL=父不在项目里 */
+  parentSubjectId?: string | null
+  /** 父/母关系类型：father|mother|guardian */
+  parentRelationType?: 'father' | 'mother' | 'guardian' | null
+  /** 派生：父节点 displayName（渲染连线标签用） */
+  parentDisplayName?: string | null
+  /** 派生：generation 一致性警告文案；空/无 = 一致或无父节点 */
+  generationWarning?: string | null
 }
 
 export interface CreateSubjectReq {
@@ -107,6 +118,12 @@ export interface CreateSubjectReq {
    * 不传 → 纯匿名被采访者（displayName 必填）
    */
   familyMemberId?: string | number | null
+  /** M14+ 家族关系图：代际；null=未分代 */
+  generation?: number | null
+  /** M14+ 家族关系图：父节点 subject.id；null=父不在项目里 */
+  parentSubjectId?: string | number | null
+  /** M14+ 家族关系图：与父的关系类型 */
+  parentRelationType?: 'father' | 'mother' | 'guardian' | null
 }
 
 /**
@@ -127,11 +144,41 @@ export interface EligibleFamilyMemberVO {
   existingSubjectId?: string
 }
 
-/** 局部更新人物。所有字段都可空；不传 = 不变；显式传 "" = 清空 */
+/** 局部更新人物。所有字段都可空；不传 = 不变；显式传 "" = 清空；M14+ 哨兵值约定见字段注释 */
 export interface UpdateSubjectReq {
   displayName?: string
   relation?: string
   note?: string
+  /** M14+：null=不变；-50=清空 */
+  generation?: number | null
+  /** M14+：null=不变；-1=清空 */
+  parentSubjectId?: string | number | null
+  /** M14+：null=不变；空串=清空 */
+  parentRelationType?: 'father' | 'mother' | 'guardian' | '' | null
+}
+
+/**
+ * M14+ 家族关系图：项目级树节点（扁平数组，前端 d3.stratify 自建树）。
+ */
+export interface SubjectTreeNodeVO {
+  id: string
+  displayName: string
+  relation?: string | null
+  generation?: number | null
+  parentSubjectId?: string | null
+  parentRelationType?: 'father' | 'mother' | 'guardian' | null
+  generationWarning?: string | null
+  familyMemberId?: string | null
+}
+
+/** M14+ 家族关系图：项目级聚合响应 */
+export interface SubjectTreeResponse {
+  nodes: SubjectTreeNodeVO[]
+  /** 待归位 subject id（generation=null 或 parent 指向不存在节点） */
+  orphans: string[]
+  /** generation 不一致的 subject id */
+  warnings: string[]
+  total: number
 }
 
 export interface AuthorizationVO {

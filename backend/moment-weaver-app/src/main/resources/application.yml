@@ -23,6 +23,12 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    # M14+：改 V17/V18 注释导致 checksum mismatch——
+    # Flyway 9.x 不支持 repair-on-migrate（10.x 才支持）
+    # 手动跑 SQL 更新 checksum（从启动日志里抄）：
+    #   UPDATE flyway_schema_history SET checksum = 309479832 WHERE version = '17';
+    #   UPDATE flyway_schema_history SET checksum = -1659528278 WHERE version = '18';
+    # 生产环境不应改 V17/V18 注释（migration 一旦发布就视为不可变）
 
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss

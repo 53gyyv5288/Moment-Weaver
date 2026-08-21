@@ -95,8 +95,25 @@ public class HeartcoveChatService {
         // 新增 relation：用户对先辈的称呼, 供 prompt 第 1 段 fallback 用
         ctx.put("relation", subject.getRelation() == null ? "先辈" : subject.getRelation());
         ctx.put("style_tone", "温和长辈");
-        ctx.put("persona_summary", subject.getHeartcovePersonaSummary() == null
-            ? "（暂无摘要）" : subject.getHeartcovePersonaSummary());
+        // M14+ 家族关系图钩子：如果 subject 设了 generation，把它追加到 persona_summary 末尾
+        // —— AI 侧不需要新增字段，persona_summary 文本里就多一句"你是用户的第 N 代长辈/晚辈"
+        // generation=null 不注入；正数=长辈（1=父母辈，2=祖辈），负数=晚辈（-1=儿女辈，-2=孙辈）
+        String basePersona = subject.getHeartcovePersonaSummary() == null
+            ? "（暂无摘要）" : subject.getHeartcovePersonaSummary();
+        if (subject.getGeneration() != null) {
+            String generationHint;
+            if (subject.getGeneration() > 0) {
+                generationHint = String.format("\n\n[家族代际] 你是用户的第 %d 代长辈。",
+                    subject.getGeneration());
+            } else if (subject.getGeneration() == 0) {
+                generationHint = "\n\n[家族代际] 你是用户同辈。";
+            } else {
+                generationHint = String.format("\n\n[家族代际] 你是用户的第 %d 代晚辈。",
+                    Math.abs(subject.getGeneration()));
+            }
+            basePersona = basePersona + generationHint;
+        }
+        ctx.put("persona_summary", basePersona);
         ctx.put("recent_dialog", recentDialog);
         ctx.put("related_quotes", relatedQuotes);
         ctx.put("last_summary", lastSummary);

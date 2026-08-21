@@ -9,9 +9,16 @@ import type {
   CreateSubjectReq,
   UpdateSubjectReq,
   EligibleFamilyMemberVO,
+  SubjectTreeResponse,
 } from '@/types/api'
 
-export type { SubjectVO, CreateSubjectReq, UpdateSubjectReq, EligibleFamilyMemberVO }
+export type {
+  SubjectVO,
+  CreateSubjectReq,
+  UpdateSubjectReq,
+  EligibleFamilyMemberVO,
+  SubjectTreeResponse,
+}
 
 export function listSubjects(projectId: string | number) {
   return backend.get<ApiResult<SubjectVO[]>>(`/v1/projects/${projectId}/subjects`)
@@ -45,4 +52,14 @@ export function updateSubject(
 
 export function deleteSubject(projectId: string | number, id: string | number) {
   return backend.delete<ApiResult<null>>(`/v1/projects/${projectId}/subjects/${id}`)
+}
+
+/**
+ * M14+ 家族关系图：项目级聚合节点（扁平数组 + 待归位 + generation 警告）。
+ * 前端 d3.stratify 自建树，换可视化库不用改后端。
+ */
+export function getProjectSubjectTree(projectId: string | number) {
+  return backend.get<ApiResult<SubjectTreeResponse>>(
+    `/v1/projects/${projectId}/subjects/tree`,
+  )
 }

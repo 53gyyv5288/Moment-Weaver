@@ -4,7 +4,7 @@
  * M11 Phase 2：人物可从家族成员里选，或纯匿名（兼容老流程）。
  * M11 Phase 3：按角色（admin/editor/viewer）控制按钮显隐。
  */
-import { inject, onMounted, ref, computed, reactive } from 'vue'
+import { inject, onMounted, ref, computed, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Plus, ChatLineRound, Delete, Link, Edit, ArrowDown, User, UserFilled } from '@element-plus/icons-vue'
@@ -14,8 +14,10 @@ import {
   createSubject,
   updateSubject,
   deleteSubject,
+  getProjectSubjectTree,
   type SubjectVO,
   type EligibleFamilyMemberVO,
+  type SubjectTreeResponse,
 } from '@/api/subject'
 import {
   listAuthorizationsByProject,
@@ -26,7 +28,9 @@ import {
 import { startInterview } from '@/api/interview'
 import AssetUploader from '@/views/asset/AssetUploader.vue'
 import AssetList from '@/views/asset/AssetList.vue'
+import FamilyTree from '@/views/family/FamilyTree.vue'
 import { formatDateTime } from '@/utils/format'
+import { suggestGeneration, formatGenerationLabel } from '@/utils/generation'
 import { useProjectPermission } from '@/composables/useProjectPermission'
 import { useAuthStore } from '@/stores/auth'
 import type { ProjectVO } from '@/api/project'
@@ -106,9 +110,38 @@ const addSubjectTab = ref<'family' | 'anonymous'>('family')  // 默认显示「�
 const eligibleMembers = ref<EligibleFamilyMemberVO[]>([])
 const loadingEligible = ref(false)
 const selectedFmId = ref<string | null>(null)  // 选中的 family_member.id
-const anonymousForm = reactive({ displayName: '', relation: '', note: '' })
+const anonymousForm = reactive({
+  displayName: '',
+  relation: '',
+  note: '',
+  // M14+ 家族关系图
+  generation: null as number | null,
+  parentSubjectId: null as string | null,
+  parentRelationType: null as 'father' | 'mother' | 'guardian' | null,
+})
 // 路径 1 选了家族成员后，留一个 relation 字段（家族成员关系由用户在 relation 里补充）
 const familyMemberRelation = ref('')
+// 路径 1 的家族成员路径同样支持家族关系图字段
+const familyMemberForm = reactive({
+  generation: null as number | null,
+  parentSubjectId: null as string | null,
+  parentRelationType: null as 'father' | 'mother' | 'guardian' | null,
+})
+// M14+ 自动建议：从 relation 词表查 generation；用户可改
+const anonymousGenSuggestion = ref<number | null>(null)
+const familyGenSuggestion = ref<number | null>(null)
+watch(
+  () => anonymousForm.relation,
+  (val) => {
+    anonymousGenSuggestion.value = suggestGeneration(val)
+  },
+)
+watch(
+  () => familyMemberRelation.value,
+  (val) => {
+    familyGenSuggestion.value = suggestGeneration(val)
+  },
+)
 
 async function loadEligible() {
   if (!showAddSubject.value) return
@@ -127,9 +160,15 @@ function openAddSubject() {
   addSubjectTab.value = eligibleMembers.value.length > 0 ? 'family' : 'anonymous'
   selectedFmId.value = null
   familyMemberRelation.value = ''
+  familyMemberForm.generation = null
+  familyMemberForm.parentSubjectId = null
+  familyMemberForm.parentRelationType = null
   anonymousForm.displayName = ''
   anonymousForm.relation = ''
   anonymousForm.note = ''
+  anonymousForm.generation = null
+  anonymousForm.parentSubjectId = null
+  anonymousForm.parentRelationType = null
   loadEligible()
 }
 
@@ -147,6 +186,7 @@ async function onAddSubject() {
     var payload: any = {
       familyMemberId: selectedFmId.value,
       relation: familyMemberRelation.value.trim() || undefined,
+      // M14+：路径 1 不传 genealogy——后端从 FamilyMember 自动继承
     }
   } else {
     if (!anonymousForm.displayName.trim()) {
@@ -157,6 +197,9 @@ async function onAddSubject() {
       displayName: anonymousForm.displayName.trim(),
       relation: anonymousForm.relation.trim() || undefined,
       note: anonymousForm.note.trim() || undefined,
+      generation: anonymousForm.generation,
+      parentSubjectId: anonymousForm.parentSubjectId || undefined,
+      parentRelationType: anonymousForm.parentRelationType || undefined,
     }
   }
   const { data } = await createSubject(projectId.value, payload)
@@ -170,12 +213,47 @@ async function onAddSubject() {
 }
 
 // 编辑人物
-const editForm = ref({ displayName: '', relation: '', note: '' })
+const editForm = ref({
+  displayName: '',
+  relation: '',
+  note: '',
+  // M14+ 家族关系图
+  generation: null as number | null,
+  parentSubjectId: null as string | null,
+  parentRelationType: null as 'father' | 'mother' | 'guardian' | null,
+})
+
+// M14+ 家族树
+const treeData = ref<SubjectTreeResponse | null>(null)
+const treeWarnings = computed(() => treeData.value?.warnings ?? [])
+async function loadTree() {
+  if (!projectId.value) return
+  try {
+    const { data } = await getProjectSubjectTree(projectId.value)
+    if (data?.code === 0) treeData.value = data.data
+    else treeData.value = null
+  } catch (e) {
+    treeData.value = null
+  }
+}
+// 点击家族树节点 → 打开对应被采访者的编辑弹窗
+function onTreeNodeClick(node: any) {
+  const target = subjects.value.find((s) => s.id === node.id)
+  if (target) onOpenEditSubject(target)
+}
 const editingSubject = ref<SubjectVO | null>(null)
 const showEditSubject = ref(false)
 const savingEdit = ref(false)
 const newAuthz = ref({ subjectId: '', scopes: ['interview'] as string[] })
 const showCreateAuthz = ref(false)
+// M14+ 编辑时的 generation 自动建议
+const editGenSuggestion = ref<number | null>(null)
+watch(
+  () => editForm.value.relation,
+  (val) => {
+    editGenSuggestion.value = suggestGeneration(val)
+  },
+)
 
 const SCOPE_LABELS: Record<string, string> = {
   interview: 'AI 采访对话',
@@ -196,6 +274,8 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // M14+ 家族关系图：subject 加载完后顺便刷一下树
+  loadTree()
   // M13+ 心声信箱：拉取每个 subject 的状态
   loadHeartcove()
 }
@@ -221,6 +301,9 @@ function onOpenEditSubject(s: SubjectVO) {
     displayName: s.displayName,
     relation: s.relation ?? '',
     note: s.note ?? '',
+    generation: s.generation ?? null,
+    parentSubjectId: s.parentSubjectId ?? null,
+    parentRelationType: (s.parentRelationType as 'father' | 'mother' | 'guardian' | null) ?? null,
   }
   showEditSubject.value = true
 }
@@ -228,11 +311,14 @@ function onOpenEditSubject(s: SubjectVO) {
 async function onSaveEditSubject() {
   if (!editingSubject.value) return
   // 后端 @AssertTrue 要求至少一个字段；前端兜底
-  if (
-    !editForm.value.displayName.trim() &&
-    !editForm.value.relation.trim() &&
-    !editForm.value.note.trim()
-  ) {
+  const anyChanged =
+    editForm.value.displayName !== editingSubject.value.displayName ||
+    (editForm.value.relation || '') !== (editingSubject.value.relation ?? '') ||
+    (editForm.value.note || '') !== (editingSubject.value.note ?? '') ||
+    editForm.value.generation !== (editingSubject.value.generation ?? null) ||
+    editForm.value.parentSubjectId !== (editingSubject.value.parentSubjectId ?? null) ||
+    editForm.value.parentRelationType !== (editingSubject.value.parentRelationType ?? null)
+  if (!anyChanged) {
     ElMessage.warning('请至少修改一个字段')
     return
   }
@@ -242,6 +328,14 @@ async function onSaveEditSubject() {
       displayName: editForm.value.displayName.trim() || undefined,
       relation: editForm.value.relation.trim() || undefined,
       note: editForm.value.note.trim() || undefined,
+      generation: editForm.value.generation,
+      // null=不变；undefined=不发该字段
+      parentSubjectId: editForm.value.parentSubjectId === null
+        ? null
+        : editForm.value.parentSubjectId || undefined,
+      parentRelationType: editForm.value.parentRelationType === null
+        ? null
+        : editForm.value.parentRelationType || undefined,
     })
     if (data && data.code === 0) {
       ElMessage.success('已保存')
@@ -532,6 +626,33 @@ function loadAssets() {
         <el-divider />
         <AssetList ref="assetListRef" :project-id="projectId" @changed="loadAssets" />
       </el-tab-pane>
+
+      <!-- M14+ 家族关系图：项目内家族树 -->
+      <el-tab-pane label="家族树">
+        <template #label>
+          <span>家族树 ({{ subjects.length }})</span>
+        </template>
+        <div class="pd__tree">
+          <el-alert
+            v-if="treeWarnings.length > 0"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 12px"
+          >
+            <template #title>{{ treeWarnings.length }} 处代际可能需要修正</template>
+            <span style="font-size: 12px">点击下方对应被采访者的"编辑"按钮调整 generation 或 parent。</span>
+          </el-alert>
+          <FamilyTree
+            v-if="treeData"
+            :nodes="treeData.nodes"
+            :orphans="treeData.orphans"
+            :enable-detail-popup="false"
+            @node-click="onTreeNodeClick"
+          />
+          <el-empty v-else description="加载中…" />
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 添加人物对话框（M11 Phase 2：Tab 形式，支持从家族成员选 / 纯匿名） -->
@@ -596,6 +717,16 @@ function loadAssets() {
                   maxlength="32"
                 />
               </el-form-item>
+              <!-- M14+ 家族关系图：路径 1（家族成员）→ 代际自动从 FamilyMember 继承，不需要在此填 -->
+              <el-alert
+                type="info"
+                :closable="false"
+                show-icon
+                style="margin-top: 8px"
+              >
+                <template #title>家族关系自动继承</template>
+                代际和上一代由家族管理员在「家族 → 成员管理」里维护；选中的家族成员的代际会自动应用到本被采访者。
+              </el-alert>
             </el-form>
             <el-alert type="info" :closable="false" show-icon style="margin-top: 8px">
               <template #title>采访家人</template>
@@ -616,6 +747,49 @@ function loadAssets() {
             <el-form-item label="备注">
               <el-input v-model="anonymousForm.note" type="textarea" :rows="2" placeholder="选填，自己看的小抄" maxlength="512" show-word-limit />
             </el-form-item>
+            <!-- M14+ 家族关系图 -->
+            <el-divider content-position="left" style="margin: 12px 0 8px">
+              <span style="font-size: 12px; color: var(--mw-text-muted)">家族关系（选填，录完可补全）</span>
+            </el-divider>
+            <el-form-item label="代际">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <el-input-number
+                  v-model="anonymousForm.generation"
+                  :min="-50"
+                  :max="50"
+                  :step="1"
+                  controls-position="right"
+                  style="width: 140px"
+                  placeholder="留空=未分代"
+                />
+                <span v-if="anonymousGenSuggestion !== null" class="muted" style="font-size: 12px">
+                  建议：{{ formatGenerationLabel(anonymousGenSuggestion) }}（填关系时自动猜的，可改）
+                </span>
+              </div>
+            </el-form-item>
+            <el-form-item label="上一代">
+              <el-select
+                v-model="anonymousForm.parentSubjectId"
+                placeholder="不指定（上一代不在本项目）"
+                clearable
+                filterable
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="opt in subjects"
+                  :key="opt.id"
+                  :label="`${opt.displayName}${opt.relation ? '（' + opt.relation + '）' : ''}`"
+                  :value="opt.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="关系类型" v-if="anonymousForm.parentSubjectId">
+              <el-radio-group v-model="anonymousForm.parentRelationType">
+                <el-radio value="father">父</el-radio>
+                <el-radio value="mother">母</el-radio>
+                <el-radio value="guardian">监护人</el-radio>
+              </el-radio-group>
+            </el-form-item>
           </el-form>
           <el-alert type="warning" :closable="false" show-icon>
             <template #title>匿名被采访者</template>
@@ -631,7 +805,7 @@ function loadAssets() {
     </el-dialog>
 
     <!-- 编辑人物对话框 -->
-    <el-dialog v-model="showEditSubject" title="编辑被采访者" width="500px">
+    <el-dialog v-model="showEditSubject" title="编辑被采访者" width="540px">
       <el-form label-width="80px" v-if="editingSubject">
         <el-form-item label="姓名">
           <el-input v-model="editForm.displayName" placeholder="如：父亲 / 王淑芬" />
@@ -642,9 +816,55 @@ function loadAssets() {
         <el-form-item label="备注">
           <el-input v-model="editForm.note" type="textarea" :rows="3" placeholder="选填，自己看的小抄" />
         </el-form-item>
+        <!-- M14+ 家族关系图 -->
+        <el-divider content-position="left" style="margin: 12px 0 8px">
+          <span style="font-size: 12px; color: var(--mw-text-muted)">家族关系</span>
+        </el-divider>
+        <el-form-item label="代际">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <el-input-number
+              v-model="editForm.generation"
+              :min="-50"
+              :max="50"
+              :step="1"
+              controls-position="right"
+              style="width: 140px"
+              placeholder="留空=未分代"
+            />
+            <span v-if="editGenSuggestion !== null && editForm.generation !== editGenSuggestion" class="muted" style="font-size: 12px">
+              建议：{{ formatGenerationLabel(editGenSuggestion) }}（基于当前关系）
+            </span>
+            <span v-else-if="editingSubject.generationWarning" class="warning-text" style="font-size: 12px">
+              ⚠️ {{ editingSubject.generationWarning }}
+            </span>
+          </div>
+        </el-form-item>
+        <el-form-item label="上一代">
+          <el-select
+            v-model="editForm.parentSubjectId"
+            placeholder="不指定（上一代不在本项目）"
+            clearable
+            filterable
+            style="width: 100%"
+          >
+            <el-option
+              v-for="opt in subjects.filter(s => s.id !== editingSubject?.id)"
+              :key="opt.id"
+              :label="`${opt.displayName}${opt.relation ? '（' + opt.relation + '）' : ''}`"
+              :value="opt.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="关系类型" v-if="editForm.parentSubjectId">
+          <el-radio-group v-model="editForm.parentRelationType">
+            <el-radio value="father">父</el-radio>
+            <el-radio value="mother">母</el-radio>
+            <el-radio value="guardian">监护人</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <el-alert type="info" :closable="false" show-icon>
           <template #title>只提交修改的字段</template>
-          至少修改一项（姓名/关系/备注）才能保存。
+          修改后保存；上一代若指向不存在节点会被后端拒绝（环检测）。
         </el-alert>
       </el-form>
       <template #footer>
@@ -794,6 +1014,10 @@ function loadAssets() {
 .pd__heartcove-hint {
   font-size: 12px;
   color: var(--mw-text-muted);
+}
+/* M14+ 家族关系图容器 */
+.pd__tree {
+  padding: 8px 4px;
 }
 .pd__subjName { display: inline-flex; align-items: center; gap: 6px; }
 .fm__name { display: inline-flex; align-items: center; gap: 6px; }

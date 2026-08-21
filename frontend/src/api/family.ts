@@ -20,6 +20,8 @@ export interface FamilyVO {
 }
 
 export interface FamilyMemberVO {
+  id: string
+  familyId: string
   userId: string
   displayName: string
   phone?: string | null
@@ -27,6 +29,15 @@ export interface FamilyMemberVO {
   avatarUrl?: string | null
   role: FamilyRole
   joinedAt: string
+  // ============ M14+ 家族关系图 ============
+  /** 代际：正数=长辈，0=本人辈，负数=晚辈；NULL=未分代 */
+  generation?: number | null
+  /** 上一代 family_member.id（同家族内）；NULL=上一代不在家族里 */
+  parentFamilyMemberId?: string | null
+  /** 与上一代的关系类型：father|mother|guardian */
+  parentMemberRelationType?: 'father' | 'mother' | 'guardian' | null
+  /** 派生：上一代 family_member 的 displayName（渲染连线标签用） */
+  parentDisplayName?: string | null
 }
 
 export interface CreateFamilyRequest {
@@ -45,6 +56,10 @@ export interface AdminCreateUserRequest {
   email?: string
   password: string
   role: FamilyRole
+  // M14+ 家族关系图：创建家族成员时一次性录入代际 + 上一代
+  generation?: number | null
+  parentFamilyMemberId?: string | number | null
+  parentMemberRelationType?: 'father' | 'mother' | 'guardian' | null
 }
 
 export interface AdminCreateUserResponse {
@@ -58,6 +73,10 @@ export interface AdminCreateUserResponse {
 export interface UpdateFamilyMemberRequest {
   role: FamilyRole
   resetPassword?: string
+  // M14+ 家族关系图：哨兵值同 Subject —— null=不变；-50/-1=清空
+  generation?: number | null
+  parentFamilyMemberId?: string | number | null
+  parentMemberRelationType?: 'father' | 'mother' | 'guardian' | '' | null
 }
 
 // ===== 家族 CRUD =====

@@ -4,6 +4,7 @@ import com.momentweaver.account.security.CurrentUser;
 import com.momentweaver.common.Result;
 import com.momentweaver.memory.dto.EligibleFamilyMemberVO;
 import com.momentweaver.memory.dto.SubjectCreateRequest;
+import com.momentweaver.memory.dto.SubjectTreeResponse;
 import com.momentweaver.memory.dto.SubjectUpdateRequest;
 import com.momentweaver.memory.dto.SubjectVO;
 import com.momentweaver.memory.service.SubjectService;
@@ -65,5 +66,15 @@ public class SubjectController {
     public Result<Void> delete(@PathVariable Long projectId, @PathVariable Long id) {
         subjectService.delete(CurrentUser.requireId(), id);
         return Result.ok();
+    }
+
+    /**
+     * M14+ 家族关系图：项目级聚合节点（扁平数组 + orphans + warnings）。
+     * 前端 d3.stratify 自建树；换可视化库不用改后端。
+     */
+    @GetMapping("/tree")
+    @Operation(summary = "家族关系图（项目级）")
+    public Result<SubjectTreeResponse> tree(@PathVariable Long projectId) {
+        return Result.ok(subjectService.listTree(CurrentUser.requireId(), projectId));
     }
 }
