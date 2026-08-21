@@ -2,6 +2,8 @@ package com.momentweaver.heartcove.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.momentweaver.account.entity.FamilyMember;
+import com.momentweaver.account.mapper.FamilyMemberMapper;
 import com.momentweaver.account.security.ProjectAccessChecker;
 import com.momentweaver.common.BusinessException;
 import com.momentweaver.common.ResultCode;
@@ -40,6 +42,8 @@ public class HeartcoveSessionService {
     private final ProjectAccessChecker projectAccessChecker;
     private final HeartcoveSessionMapper sessionMapper;
     private final HeartcoveMessageMapper messageMapper;
+    /** M14+：用于查 user 绑定的 FamilyMember.generation 算代际文案 */
+    private final FamilyMemberMapper familyMemberMapper;
 
     /**
      * 获取或创建当前用户的活动会话（active）。
@@ -63,6 +67,12 @@ public class HeartcoveSessionService {
         LocalDateTime now = LocalDateTime.now();
         if (existing != null) {
             session = existing;
+            // M14+：existing session 行 cached_persona_summary 可能为 NULL（老 session），
+            // 也可能在 subject.gen / user.fm.gen 变更后过期。这里强制覆盖一次——
+            // 重新进入采访意味着用户期望"最新人设"，缓存失效是可接受的代价。
+            session.setCachedPersonaSummary(buildPersonaSummary(userId, subject));
+            session.setUpdatedAt(now);
+            sessionMapper.updateById(session);
         } else {
             session = new HeartcoveSession();
             session.setSubjectId(subjectId);
@@ -72,6 +82,8 @@ public class HeartcoveSessionService {
             session.setStartedAt(now);
             session.setClientIp(ip);
             session.setClientUa(ua);
+            // M14+：session 启动时一次性算 persona_summary（含代际文案）
+            session.setCachedPersonaSummary(buildPersonaSummary(userId, subject));
             session.setCreatedAt(now);
             session.setUpdatedAt(now);
             sessionMapper.insert(session);
@@ -219,5 +231,63 @@ public class HeartcoveSessionService {
         vo.setSafetyFlag(m.getSafetyFlag());
         vo.setCreatedAt(m.getCreatedAt());
         return vo;
+    }
+
+    /**
+     * M14+：构造 session 启动时缓存的 persona_summary（basePersona + 代际文案）。
+     *
+     * <p>口径：subject.gen / user.gen 都是相对家族根的代际偏移量（0=本人辈，正数=晚辈，负数=长辈），
+     * 数字越大辈分越小。subject.gen - user.gen 即两人代际差：
+     *   <ul>
+     *     <li>差 = 0 → 同辈</li>
+     *     <li>差 > 0 → subject 更年轻 → subject 是 user 的晚辈</li>
+     *     <li>差 < 0 → subject 更年长 → subject 是 user 的长辈</li>
+     *   </ul>
+     * 任一方 generation 为 null 则跳过代际注入（个人项目 / 自传场景）。</p>
+     */
+    private String buildPersonaSummary(Long userId, Subject subject) {
+        String basePersona = subject.getHeartcovePersonaSummary() == null
+            ? "（暂无摘要）" : subject.getHeartcovePersonaSummary();
+
+        Integer subjectGen = subject.getGeneration();
+        if (subjectGen == null) {
+            return basePersona;
+        }
+
+        // 拿 user 绑定的 FamilyMember.generation（user 没绑 fm → generation=null → 跳过）
+        Integer userGen = null;
+        List<FamilyMember> fms = familyMemberMapper.selectList(
+            new LambdaQueryWrapper<FamilyMember>()
+                .eq(FamilyMember::getUserId, userId)
+                .last("LIMIT 1")
+        );
+        if (!fms.isEmpty()) {
+            userGen = fms.get(0).getGeneration();
+        }
+
+        if (userGen == null) {
+            return basePersona;
+        }
+
+        int diff = subjectGen - userGen;
+        int absDiff = Math.abs(diff);
+        String hint;
+        if (diff == 0) {
+            hint = "\n\n[家族代际] 你是用户同辈。";
+        } else if (diff > 0) {
+            // subject 是 user 的晚辈
+            if (absDiff == 1) hint = "\n\n[家族代际] 你是用户的儿女辈。";
+            else if (absDiff == 2) hint = "\n\n[家族代际] 你是用户的孙辈。";
+            else if (absDiff == 3) hint = "\n\n[家族代际] 你是用户的曾孙辈。";
+            else hint = String.format("\n\n[家族代际] 你是用户的第 %d 代晚辈。", absDiff);
+        } else {
+            // diff < 0，subject 是 user 的长辈
+            if (absDiff == 1) hint = "\n\n[家族代际] 你是用户的父母辈。";
+            else if (absDiff == 2) hint = "\n\n[家族代际] 你是用户的祖辈。";
+            else if (absDiff == 3) hint = "\n\n[家族代际] 你是用户的曾祖辈。";
+            else hint = String.format("\n\n[家族代际] 你是用户的第 %d 代长辈。", absDiff);
+        }
+
+        return basePersona + hint;
     }
 }

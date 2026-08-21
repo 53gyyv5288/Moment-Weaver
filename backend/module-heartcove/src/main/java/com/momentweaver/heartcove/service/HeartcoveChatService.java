@@ -95,25 +95,27 @@ public class HeartcoveChatService {
         // 新增 relation：用户对先辈的称呼, 供 prompt 第 1 段 fallback 用
         ctx.put("relation", subject.getRelation() == null ? "先辈" : subject.getRelation());
         ctx.put("style_tone", "温和长辈");
-        // M14+ 家族关系图钩子：如果 subject 设了 generation，把它追加到 persona_summary 末尾
-        // —— AI 侧不需要新增字段，persona_summary 文本里就多一句"你是用户的第 N 代长辈/晚辈"
-        // generation=null 不注入；正数=长辈（1=父母辈，2=祖辈），负数=晚辈（-1=儿女辈，-2=孙辈）
-        String basePersona = subject.getHeartcovePersonaSummary() == null
-            ? "（暂无摘要）" : subject.getHeartcovePersonaSummary();
-        if (subject.getGeneration() != null) {
-            String generationHint;
-            if (subject.getGeneration() > 0) {
-                generationHint = String.format("\n\n[家族代际] 你是用户的第 %d 代长辈。",
-                    subject.getGeneration());
-            } else if (subject.getGeneration() == 0) {
-                generationHint = "\n\n[家族代际] 你是用户同辈。";
-            } else {
-                generationHint = String.format("\n\n[家族代际] 你是用户的第 %d 代晚辈。",
-                    Math.abs(subject.getGeneration()));
+        // M14+ 家族关系图：persona_summary（含代际文案）由 HeartcoveSessionService.openOrCreate
+        // 在 session 启动时一次性算好，缓存进 heartcove_session.cached_persona_summary。
+        // 这里直接读缓存，避免每条消息都查 subject + family_member。
+        // 兼容：NULL 走旧路径（老 session 行 / 缓存字段上线前的历史数据）
+        HeartcoveSession cachedSession = sessionMapper.selectById(sessionId);
+        String cachedPersona = cachedSession == null ? null : cachedSession.getCachedPersonaSummary();
+        if (cachedPersona == null) {
+            String basePersona = subject.getHeartcovePersonaSummary() == null
+                ? "（暂无摘要）" : subject.getHeartcovePersonaSummary();
+            // 旧 session 兜底：仅基于 subject.generation 单边注入（不带 user 对比）
+            if (subject.getGeneration() != null) {
+                int g = subject.getGeneration();
+                String generationHint;
+                if (g > 0) generationHint = String.format("\n\n[家族代际] 你是用户的第 %d 代长辈。", g);
+                else if (g == 0) generationHint = "\n\n[家族代际] 你是用户同辈。";
+                else generationHint = String.format("\n\n[家族代际] 你是用户的第 %d 代晚辈。", Math.abs(g));
+                basePersona = basePersona + generationHint;
             }
-            basePersona = basePersona + generationHint;
+            cachedPersona = basePersona;
         }
-        ctx.put("persona_summary", basePersona);
+        ctx.put("persona_summary", cachedPersona);
         ctx.put("recent_dialog", recentDialog);
         ctx.put("related_quotes", relatedQuotes);
         ctx.put("last_summary", lastSummary);

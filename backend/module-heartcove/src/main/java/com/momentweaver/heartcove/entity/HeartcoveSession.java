@@ -33,6 +33,12 @@ public class HeartcoveSession {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    /**
+     * M14+：session 启动时缓存的 persona_summary（含代际文案）。
+     * NULL=走"现算"路径（兼容老 session）；非空=直接读。
+     */
+    private String cachedPersonaSummary;
+
     @TableLogic
     private Integer deleted;
 }
